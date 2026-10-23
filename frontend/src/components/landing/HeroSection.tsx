@@ -8,10 +8,6 @@ import {
   ArrowRight,
   Zap,
   PhoneCall,
-  ShieldCheck,
-  CheckCircle2,
-  Clock,
-  TrendingDown,
   Volume2
 } from 'lucide-react';
 

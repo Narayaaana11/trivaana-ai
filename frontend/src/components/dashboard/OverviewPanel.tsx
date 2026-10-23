@@ -7,9 +7,7 @@ import {
   Clock,
   CalendarCheck,
   Zap,
-  TrendingUp,
   ArrowUpRight,
-  ShieldCheck,
   ChevronRight,
   Sparkles,
 } from 'lucide-react';

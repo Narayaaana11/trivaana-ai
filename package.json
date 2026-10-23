@@ -1,0 +1,13 @@
+{
+  "name": "trivaana-ai",
+  "version": "2.1.0",
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=.env.local index.js",
+    "dev": "npm run dev --prefix frontend"
+  },
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^1.0.0",
+    "dotenv": "^16.4.7"
+  }
+}

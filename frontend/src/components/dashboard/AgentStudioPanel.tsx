@@ -94,8 +94,28 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({
     window.speechSynthesis.speak(utterance);
   };
 
-  const handleSavePrompt = () => {
-    alert(`Custom prompt configuration saved for ${selectedAgent?.name}!`);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
+
+  const handleSavePrompt = async () => {
+    if (!selectedAgent) return;
+    setIsSaving(true);
+    setSaveMessage(null);
+    try {
+      const updated = await trivaanaApi.updateAgent(selectedAgent.id, {
+        system_prompt: systemPrompt,
+        language: selectedLanguage,
+        speech_rate: speechRate,
+      });
+      setSelectedAgent(updated);
+      setAgents((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+      setSaveMessage('Persona configuration successfully saved to server!');
+      setTimeout(() => setSaveMessage(null), 4000);
+    } catch (err: any) {
+      alert(`Failed to save persona: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -186,13 +206,21 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({
 
               <button
                 onClick={handleSavePrompt}
-                className="py-2 px-4 rounded-xl bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
+                disabled={isSaving}
+                className="py-2 px-4 rounded-xl bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white text-xs font-bold flex items-center gap-1.5 shadow-2xs transition-colors cursor-pointer"
               >
                 <Save className="w-3.5 h-3.5" />
-                <span>Save Persona</span>
+                <span>{isSaving ? 'Saving...' : 'Save Persona'}</span>
               </button>
             </div>
           </div>
+
+          {saveMessage && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-medium flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{saveMessage}</span>
+            </div>
+          )}
 
           {/* Controls: Dialect & Speed */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

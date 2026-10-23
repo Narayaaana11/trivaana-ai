@@ -2,15 +2,10 @@ import React, { useState } from 'react';
 import {
   PhoneCall,
   PhoneOff,
-  Mic,
-  MicOff,
-  Volume2,
   Sparkles,
   Bot,
   User,
-  ShieldCheck,
 } from 'lucide-react';
-import BRAND from '@/lib/brand';
 
 interface LiveCallSimulatorModalProps {
   isOpen: boolean;
@@ -24,7 +19,6 @@ export const LiveCallSimulatorModal: React.FC<LiveCallSimulatorModalProps> = ({
   const [activeLang, setActiveLang] = useState<'te' | 'hi' | 'en'>('te');
   const [callStatus, setCallStatus] = useState<'idle' | 'calling' | 'connected'>('idle');
   const [dialedDigits, setDialedDigits] = useState('9848022338');
-  const [isMuted, setIsMuted] = useState(false);
   const [conversation, setConversation] = useState<{ sender: 'ai' | 'user'; text: string }[]>([]);
 
   if (!isOpen) return null;
@@ -112,9 +106,11 @@ export const LiveCallSimulatorModal: React.FC<LiveCallSimulatorModalProps> = ({
             <div className="flex items-center justify-between mb-4">
               <span className="text-[10px] font-bold text-orange-400 uppercase tracking-wider flex items-center gap-1">
                 <Sparkles className="w-3 h-3" />
-                Dialpad Sandbox
+                Browser Simulator
               </span>
-              <span className="text-[10px] text-slate-500 font-mono">SIP 5060</span>
+              <span className="text-[10px] bg-slate-800 text-slate-300 font-medium px-2 py-0.5 rounded-full">
+                Simulated Preview (₹0.00)
+              </span>
             </div>
 
             {/* Language Selector Tabs */}

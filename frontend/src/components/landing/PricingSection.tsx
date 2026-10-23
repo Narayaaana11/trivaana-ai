@@ -24,17 +24,17 @@ const TIERS = [
     billing: 'per month + 18% GST',
     description: 'Perfect for local clinics, boutique brokerages, and solo founders testing AI calling.',
     highlight: false,
-    ratePerMin: '₹3.80/min',
+    ratePerMin: '₹6.50/min',
     features: [
-      '1,000 Minutes Included',
+      'Prepaid Wallet Billing in Integer Paise',
       '2 Concurrent Calling Lines',
       'Telugu, Hindi & Indian English',
-      'CSV Lead List Upload',
-      'Full Call Transcripts & Audio',
+      'CSV Lead List Upload & Row Validation',
+      'Full Call Transcripts & Recording Audio',
       'TRAI 10 AM - 6 PM Compliance Guard',
       'Community Email Support',
     ],
-    cta: 'Start with ₹2,999',
+    cta: 'Start with Starter Plan',
     btnClass: 'bg-slate-100 hover:bg-slate-200 text-slate-900 border border-slate-200',
   },
   {
@@ -45,13 +45,13 @@ const TIERS = [
     description: 'Engineered for scaling real estate agencies, edtech academies, and auto dealerships.',
     highlight: true,
     badge: 'Most Popular for SMBs',
-    ratePerMin: '₹3.40/min',
+    ratePerMin: '₹6.50/min',
     features: [
-      '3,000 Minutes Included',
+      'Prepaid Wallet Billing (₹6.50/min Standard, ₹8.50/min Premium)',
       '10 Concurrent Calling Lines',
-      'All 7 Indian Dialects (Tamil, Kannada, etc.)',
+      'All 7 Indian Dialects (Telugu, Hindi, Tamil, Kannada, etc.)',
       'Autonomous OSM Lead Scout (Vizag, Hyd, Blr)',
-      'WhatsApp Calendar Invite Dispatcher',
+      'Automated WhatsApp Post-Call Dispatcher',
       'Speed-to-Lead Webhook (<30s trigger)',
       '5 Outpero Industry Dialect Presets',
       'Emergency Concurrency Kill Switch',
@@ -67,13 +67,13 @@ const TIERS = [
     billing: 'per month + 18% GST',
     description: 'For corporate BPOs, hospital chains, and BFSI financial institutions with heavy volume.',
     highlight: false,
-    ratePerMin: '₹2.90/min',
+    ratePerMin: 'Volume Discounter',
     features: [
-      '10,000 Minutes Included',
-      '50 Concurrent Calling Lines',
-      'Dedicated Indian SIP Trunk Integration',
+      'Volume Metering down to Integer Paise (₹0.108/sec)',
+      '50+ Concurrent Calling Lines',
+      'Dedicated Exotel / Twilio SIP Trunk Integration',
       'Custom Voice Cloning & Fine-Tuned Prompts',
-      'Razorpay Multi-Subaccount Billing',
+      'Server-Verified Razorpay Payment Gateway',
       'Zero-Float-Drift Integer Paise Ledger',
       'Custom CRM Webhooks (Salesforce, LeadSquared)',
       'Dedicated 99.9% Uptime SLA',
@@ -103,7 +103,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
             </span>
           </h2>
           <p className="mt-4 text-base sm:text-lg text-slate-600">
-            Pre-fund your calling wallet via Razorpay UPI or Netbanking. Balance is deducted in whole integer paise for actual connected seconds only.
+            Pre-fund your calling wallet via Razorpay UPI or Netbanking. Balance is deducted in whole integer paise for actual connected seconds only (₹6.50/min standard, ₹8.50/min premium, 30s increments). SAC Code: 998313.
           </p>
         </div>
 

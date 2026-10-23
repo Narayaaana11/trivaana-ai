@@ -50,30 +50,53 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
   const handleQuickRecharge = async (amount: number) => {
     setIsProcessing(true);
     try {
-      // 1. Create Razorpay order
+      // 1. Create Razorpay order on server
       const order = await trivaanaApi.createRazorpayOrder(amount);
 
-      // 2. Simulate Razorpay payment confirmation
-      const fakePaymentId = `pay_${Date.now()}`;
-      await trivaanaApi.submitRazorpayWebhook({
-        order_id: order.order_id,
-        payment_id: fakePaymentId,
-        signature: 'sig_verified_mock_checksum',
-        amount_inr: amount,
-      });
+      if (order.is_sandbox || !window.Razorpay) {
+        // Transparent Sandbox Mode with atomic server-verified ledger credit
+        await trivaanaApi.sandboxTopup(amount);
+        confetti({
+          particleCount: 80,
+          spread: 60,
+          origin: { y: 0.6 },
+        });
+        alert(`₹${amount.toLocaleString('en-IN')} added to wallet successfully (Server Sandbox Ledger Credit)!`);
+      } else {
+        // Live Razorpay Checkout
+        const rzp = new window.Razorpay({
+          key: order.key_id,
+          amount: order.amount,
+          currency: order.currency,
+          name: 'Trivaana AI SaaS',
+          description: `Prepaid Telephony Credit (₹${amount})`,
+          order_id: order.id,
+          handler: async (response: any) => {
+            await trivaanaApi.submitRazorpayWebhook({
+              order_id: response.razorpay_order_id,
+              payment_id: response.razorpay_payment_id,
+              signature: response.razorpay_signature,
+              amount_inr: amount,
+            });
+            confetti({
+              particleCount: 90,
+              spread: 70,
+              origin: { y: 0.6 },
+            });
+            alert(`Payment of ₹${amount.toLocaleString('en-IN')} verified & credited!`);
+            await fetchTransactions();
+            if (onBalanceUpdated) onBalanceUpdated();
+          },
+          theme: { color: '#ea580c' },
+        });
+        rzp.open();
+        return;
+      }
 
-      // Confetti burst
-      confetti({
-        particleCount: 80,
-        spread: 60,
-        origin: { y: 0.6 },
-      });
-
-      alert(`₹${amount.toLocaleString('en-IN')} added to wallet successfully via Razorpay!`);
       await fetchTransactions();
       if (onBalanceUpdated) onBalanceUpdated();
     } catch (err: any) {
-      alert(`Payment failed: ${err.message}`);
+      alert(`Payment failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsProcessing(false);
     }
