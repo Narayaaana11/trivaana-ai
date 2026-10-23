@@ -29,8 +29,8 @@ export const RoiCalculatorSection: React.FC<RoiCalculatorSectionProps> = ({
   const humanAgentsNeeded = Math.max(1, Math.ceil(monthlyLeads / 1500));
   const humanMonthlyCost = humanAgentsNeeded * 28000;
 
-  // Trivaana AI Cost: ₹3.20 per minute
-  const trivaanaRatePerMin = 3.20;
+  // Trivaana AI Cost: ₹6.50 per minute standard tariff
+  const trivaanaRatePerMin = 6.50;
   const trivaanaMonthlyCost = Math.round(totalMinutes * trivaanaRatePerMin);
 
   // Net Savings

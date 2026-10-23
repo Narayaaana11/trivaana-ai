@@ -2,22 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Lead } from '@/types/trivaana';
 import {
-  Users,
   Compass,
   Upload,
   Search,
   Filter,
   PhoneCall,
   CheckCircle2,
-  AlertCircle,
-  Building2,
-  Stethoscope,
-  GraduationCap,
-  Car,
-  Landmark,
   Sparkles,
   RefreshCw,
-  Plus,
 } from 'lucide-react';
 
 interface LeadManagementPanelProps {
@@ -62,10 +54,15 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
     setScoutResultMsg(null);
     try {
       const res = await trivaanaApi.discoverLeads(scoutCity, scoutVertical, 12);
-      setScoutResultMsg(`Discovered & enrolled ${res.leads_added} verified ${scoutVertical} prospects in ${scoutCity}!`);
-      await fetchLeads();
+      if (res.status === 'not_configured') {
+        setScoutResultMsg(`External Scout Notice: ${res.message}`);
+      } else {
+        const count = res.leads_added ?? res.imported_count ?? 0;
+        setScoutResultMsg(`Discovered & enrolled ${count} verified ${scoutVertical} prospects in ${scoutCity}!`);
+        await fetchLeads();
+      }
     } catch (err: any) {
-      alert(`Scout failed: ${err.message}`);
+      alert(`Scout failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsScouting(false);
     }
@@ -77,10 +74,19 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
     setIsUploadingCsv(true);
     try {
       const res = await trivaanaApi.uploadLeadsCsv(file);
-      alert(`Successfully imported ${res.leads_imported} leads from CSV.`);
+      const imported = res.imported_count ?? res.leads_imported ?? 0;
+      const rejected = res.rejected_count ?? res.failed_count ?? 0;
+      let msg = `Successfully imported ${imported} lead(s) from CSV.`;
+      if (rejected > 0) {
+        msg += ` ${rejected} invalid or duplicate row(s) safely rejected.`;
+        if (res.errors && res.errors.length > 0) {
+          msg += ` Reason: ${res.errors[0].reason || res.errors[0].error}`;
+        }
+      }
+      alert(msg);
       await fetchLeads();
     } catch (err: any) {
-      alert(`CSV Upload failed: ${err.message}`);
+      alert(`CSV Upload failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsUploadingCsv(false);
     }
