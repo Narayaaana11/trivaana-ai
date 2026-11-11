@@ -9,7 +9,6 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
-from core.config import settings
 from providers import get_telephony_provider
 from services.call_service import CallService
 from services.compliance_service import ComplianceService

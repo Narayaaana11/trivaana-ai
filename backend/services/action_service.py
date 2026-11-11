@@ -13,7 +13,6 @@ import httpx
 
 from core.config import settings
 from core.vault import decrypt_config_json
-from providers import get_telephony_provider
 from services.webhook_service import is_safe_public_url
 
 

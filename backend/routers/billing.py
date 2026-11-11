@@ -4,7 +4,7 @@ TRIVAANA AI: Billing, GST Invoices, Subscriptions & Financial Ledger Router
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from datetime import datetime, timezone, timedelta
 import sqlite3
 import uuid

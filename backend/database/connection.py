@@ -118,16 +118,6 @@ def _get_pg_pool():
     return _PG_POOL
 
 
-def get_active_driver() -> str:
-    if settings.has_postgres:
-        try:
-            import psycopg  # type: ignore  # noqa: F401
-            return "psycopg"
-        except ImportError:
-            pass
-    return "sqlite3"
-
-
 def get_connection(db_path: Optional[Path] = None) -> Any:
     if db_path is None and settings.has_postgres:
         try:

@@ -7,7 +7,6 @@ Validates:
 4. Pause and resume operations.
 """
 
-import pytest
 from database import get_connection
 from core.config import settings
 
@@ -48,7 +47,6 @@ def test_verified_consent_and_opt_out_enforcement(client, demo_auth_headers):
         "bypass_trai": True
     })
     assert start_resp.status_code == 200
-    start_data = start_resp.json()
 
     # Verify that the opted-out lead was NOT dialed in this campaign
     conn = get_connection(settings.SQLITE_DB_PATH)

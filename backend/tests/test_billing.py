@@ -2,8 +2,7 @@
 TRIVAANA AI: Billing & Integer-Paise Ledger Tests
 """
 
-import pytest
-from services.billing_service import BillingService, InsufficientBalanceError
+from services.billing_service import BillingService
 from database.connection import get_connection
 
 def test_pricing_catalog(client):

@@ -7,9 +7,7 @@ Validates:
 4. Multilingual dialect handling (Telugu te-IN, Hindi hi-IN, Indian English en-IN).
 """
 
-import pytest
 from providers.voice_adapters import SarvamVoiceProvider, ElevenLabsVoiceProvider
-from providers.twilio_adapter import TwilioTelephonyProvider
 
 def test_twiml_call_control_endpoint(client, demo_auth_headers):
     """

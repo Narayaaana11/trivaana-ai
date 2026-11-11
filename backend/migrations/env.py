@@ -8,7 +8,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
-from core.config import settings  # noqa: E402
 from database.sqlalchemy_engine import Base, SQLALCHEMY_DATABASE_URL  # noqa: E402
 import database.models  # noqa: E402, F401
 

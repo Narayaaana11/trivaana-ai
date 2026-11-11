@@ -5,7 +5,7 @@ Dynamically selects active telephony, voice, and payment adapters.
 
 from core.config import settings
 from providers.base import BaseTelephonyProvider, BaseVoiceProvider, BasePaymentProvider
-from providers.mock_adapter import MockTelephonyProvider, MockVoiceProvider, MockPaymentProvider
+from providers.mock_adapter import MockTelephonyProvider
 from providers.exotel_adapter import ExotelTelephonyProvider
 from providers.twilio_adapter import TwilioTelephonyProvider
 from providers.plivo_adapter import PlivoTelephonyProvider

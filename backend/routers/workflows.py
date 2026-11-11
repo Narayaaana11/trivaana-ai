@@ -9,7 +9,7 @@ import sqlite3
 import sys
 from pathlib import Path
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 

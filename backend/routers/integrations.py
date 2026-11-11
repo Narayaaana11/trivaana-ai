@@ -12,10 +12,9 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, get_current_user, require_roles
+from core.dependencies import get_current_tenant, require_roles
 from core.config import settings
 from core.vault import decrypt_config_json, encrypt_config_json, encrypt_secret
-from services.webhook_service import WebhookService, is_safe_public_url
 from services.audit_service import AuditService
 
 router = APIRouter(prefix="/api", tags=["Integrations & Webhooks"])

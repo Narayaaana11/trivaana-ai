@@ -16,10 +16,6 @@ class InsufficientBalanceError(Exception):
     pass
 
 
-class DuplicateTransactionError(Exception):
-    pass
-
-
 class BillingService:
     @staticmethod
     def get_pricing_catalog(conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:

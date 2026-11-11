@@ -6,7 +6,7 @@ infrastructure monitoring, and system audit logs without exposing private custom
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import Any, Dict, Optional
+from typing import Optional
 import json
 import sqlite3
 from datetime import datetime, timezone

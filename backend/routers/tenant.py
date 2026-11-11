@@ -4,7 +4,7 @@ Aggregates real persisted records under authenticated tenant scope with filterin
 """
 
 from fastapi import APIRouter, Depends, Query
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 import sqlite3
 from database.connection import get_db
 from core.dependencies import get_current_tenant

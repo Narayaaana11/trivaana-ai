@@ -7,7 +7,6 @@ turn execution over `/api/calls/stream/{call_id}` for Exotel, Twilio, Plivo, and
 
 import base64
 import io
-import json
 import math
 import sqlite3
 import struct

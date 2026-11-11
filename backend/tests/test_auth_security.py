@@ -10,7 +10,6 @@ Validates:
 import pytest
 from pydantic import ValidationError
 from core.config import Settings
-from core.security import create_access_token
 
 def test_anonymous_requests_rejected(client):
     """Anonymous requests must be rejected with HTTP 401 and WWW-Authenticate header."""

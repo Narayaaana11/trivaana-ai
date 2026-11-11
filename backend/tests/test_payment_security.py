@@ -13,7 +13,6 @@ Validates:
 import hmac
 import hashlib
 import json
-import pytest
 from core.config import settings
 
 def test_server_order_recording_and_amount_tamper_protection(client, demo_auth_headers):

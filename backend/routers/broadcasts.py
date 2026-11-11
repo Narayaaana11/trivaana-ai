@@ -4,7 +4,7 @@ Separate one-way voice announcement module with TTS audio generation, recipient 
 DNC scrubbing, scheduling, pause/start controls, and separate billing/reporting.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional
 import base64
@@ -20,7 +20,7 @@ from core.config import settings
 from providers.voice_adapters import get_voice_provider
 from services.call_service import normalize_phone
 from services.compliance_service import ComplianceService
-from services.billing_service import BillingService, InsufficientBalanceError
+from services.billing_service import BillingService
 from services.storage_service import StorageService
 
 router = APIRouter(prefix="/api/broadcasts", tags=["Voice Broadcast"])
@@ -36,10 +36,6 @@ class CreateBroadcastRequest(BaseModel):
     scheduled_at: Optional[str] = None
     is_sandbox: bool = False
     recipients: List[dict] = []
-
-
-class AddRecipientsRequest(BaseModel):
-    recipients: List[dict]
 
 
 @router.get("")

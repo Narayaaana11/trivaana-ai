@@ -6,9 +6,7 @@ Provides HTTP `/transcribe` and `/synthesize` endpoints matching Trivaana's exte
 
 import io
 import os
-from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import Response
 from pydantic import BaseModel
 
 app = FastAPI(title="Trivaana Self-Hosted Speech Microservice", version="1.0.0")

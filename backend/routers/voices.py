@@ -4,7 +4,7 @@ Manages voice profiles, language filters, previews, and provider verification te
 Never marks voices as live-verified until tested with configured provider credentials.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional
 import sqlite3

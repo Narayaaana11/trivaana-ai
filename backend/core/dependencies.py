@@ -141,16 +141,6 @@ def get_current_tenant(
     return tenant_dict
 
 
-def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Ensure authenticated user has owner or admin role."""
-    if current_user.get("role") not in ("owner", "admin"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operation requires workspace owner or administrator privileges"
-        )
-    return current_user
-
-
 def require_roles(allowed_roles: Iterable[str]):
     """Dependency factory enforcing workspace RBAC roles using hierarchy."""
     allowed = tuple(allowed_roles)

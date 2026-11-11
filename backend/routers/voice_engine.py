@@ -18,7 +18,6 @@ from voice_engine.livekit_bridge import create_livekit_room_token
 from voice_engine.livekit_agent_worker import get_worker_capabilities
 from voice_engine.pipeline import RealtimeVoicePipeline
 from voice_engine.stt_providers import get_stt_provider
-from providers.voice_adapters import get_voice_provider
 
 router = APIRouter(prefix="/api/voice-engine", tags=["Real-Time Voice Engine"])
 

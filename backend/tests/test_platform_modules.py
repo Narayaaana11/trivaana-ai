@@ -5,9 +5,6 @@ Verifies AI Employee Builder, Prompt Engine, Voice Library, Real-Time Voice Engi
 Compliance, Workspaces/RBAC, Analytics, and Super Admin.
 """
 
-import uuid
-
-
 def test_ai_employee_builder_prompt_versioning_and_lifecycle(client, demo_auth_headers):
     # 1. Generate structured prompt from natural language
     gen_resp = client.post(

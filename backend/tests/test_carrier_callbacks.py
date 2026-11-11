@@ -11,7 +11,6 @@ Validates:
 import hmac
 import hashlib
 import base64
-import pytest
 from core.config import settings
 
 def test_twilio_callback_signature_verification(client, demo_auth_headers, monkeypatch):

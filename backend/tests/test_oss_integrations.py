@@ -195,7 +195,6 @@ def test_telephony_ws_audio_codec_barge_in_dtmf_and_tts_cache(client, demo_auth_
 def test_dispositions_transfer_worker_scheduler_rate_limit_and_pg_compat(client, demo_auth_headers):
     from core.rate_limit import SlidingWindowRateLimiter
     from database.connection import _translate_sqlite_params
-    from services.disposition_service import DispositionService
     from services.email_service import EmailService
     from worker.tasks import run_worker_tick
 

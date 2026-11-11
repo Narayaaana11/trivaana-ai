@@ -6,7 +6,6 @@ Configures isolated temporary test database and FastAPI TestClient.
 import os
 import tempfile
 import pytest
-import sqlite3
 from fastapi.testclient import TestClient
 
 # Create temp db path before importing app/settings

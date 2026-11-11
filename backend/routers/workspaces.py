@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, get_current_user, require_roles, ROLE_HIERARCHY
+from core.dependencies import get_current_tenant, require_roles, ROLE_HIERARCHY
 from core.security import hash_api_key
 from services.audit_service import AuditService
 from services.storage_service import StorageService
