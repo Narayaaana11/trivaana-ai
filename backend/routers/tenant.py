@@ -108,7 +108,7 @@ def get_tenant_stats(
     conversion_rate_str = f"{round((demos_booked / total_calls) * 100, 1)}%" if total_calls > 0 else "0.0%"
     total_usage_paise = c_row["total_cost_paise"]
 
-    # 4. Daily call series from real calls
+    # 4. Daily call series from real calls (most recent N days ordered chronologically)
     cur.execute(f"""
     SELECT substr(created_at, 1, 10) as day,
            COUNT(*) as total,
@@ -118,10 +118,10 @@ def get_tenant_stats(
     FROM calls
     {where}
     GROUP BY substr(created_at, 1, 10)
-    ORDER BY day ASC
+    ORDER BY day DESC
     LIMIT ?
     """, [*params, days])
-    daily_series = [
+    daily_series = list(reversed([
         {
             "date": r["day"],
             "total": r["total"],
@@ -130,7 +130,7 @@ def get_tenant_stats(
             "spend_inr": round(r["spend_paise"] / 100.0, 2),
         }
         for r in cur.fetchall()
-    ]
+    ]))
 
     # 5. Outcome distribution
     cur.execute(f"""

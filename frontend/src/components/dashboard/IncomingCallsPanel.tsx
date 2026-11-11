@@ -162,19 +162,29 @@ export const IncomingCallsPanel: React.FC<IncomingCallsPanelProps> = ({
 
       {(subTab === 'calls' || subTab === 'messages' || subTab === 'missed') && (
         <div className="bg-white rounded-3xl p-6 border border-slate-200/90 space-y-2 text-xs">
-          {(subTab === 'missed' ? missedCalls : inboundCalls).length === 0 ? (
-            <div className="py-10 text-center text-slate-400">No records in this view yet.</div>
-          ) : (
-            (subTab === 'missed' ? missedCalls : inboundCalls).map((c) => (
-              <div key={c.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between">
-                <div>
-                  <div className="font-bold text-slate-900">{c.contact_name} ({c.phone})</div>
-                  <div className="text-[11px] text-slate-500">{c.outcome} • {c.duration}s</div>
+          {(() => {
+            const list =
+              subTab === 'missed'
+                ? missedCalls
+                : subTab === 'messages'
+                ? inboundCalls.filter((c) => Boolean(c.summary || c.transcript))
+                : inboundCalls;
+            return list.length === 0 ? (
+              <div className="py-10 text-center text-slate-400">No records in this view yet.</div>
+            ) : (
+              list.map((c) => (
+                <div key={c.id} className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between">
+                  <div>
+                    <div className="font-bold text-slate-900">{c.contact_name} ({c.phone})</div>
+                    <div className="text-[11px] text-slate-500">
+                      {subTab === 'messages' ? (c.summary || c.transcript || c.outcome) : `${c.outcome} • ${c.duration}s`}
+                    </div>
+                  </div>
+                  <span className="text-[11px] font-mono text-slate-600">{c.status}</span>
                 </div>
-                <span className="text-[11px] font-mono text-slate-600">{c.status}</span>
-              </div>
-            ))
-          )}
+              ))
+            );
+          })()}
         </div>
       )}
     </div>

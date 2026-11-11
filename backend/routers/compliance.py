@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, get_current_user
+from core.dependencies import get_current_tenant, get_current_user, require_roles
 from services.compliance_service import ComplianceService
 from services.call_service import normalize_phone
 from services.audit_service import AuditService
@@ -64,7 +64,7 @@ def get_compliance_policy(
 def update_compliance_policy(
     req: PolicyUpdateRequest,
     tenant: dict = Depends(get_current_tenant),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     ComplianceService.get_policy(db, tenant["id"])
@@ -212,6 +212,7 @@ def add_dnc_entry(
 def remove_dnc_entry(
     entry_id: str,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     cur = db.cursor()
@@ -239,7 +240,7 @@ def get_disposition_mapping(
 def update_disposition_mapping(
     req: DispositionMapRequest,
     tenant: dict = Depends(get_current_tenant),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     from services.disposition_service import DispositionService

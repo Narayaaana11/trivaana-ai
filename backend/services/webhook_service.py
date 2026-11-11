@@ -7,30 +7,55 @@ import hashlib
 import hmac
 import ipaddress
 import json
+import socket
 import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
-import requests
+import httpx
+from core.vault import decrypt_secret
+
+
+def _is_global_ip(ip: ipaddress._BaseAddress) -> bool:
+    return (
+        ip.is_global
+        and not ip.is_private
+        and not ip.is_loopback
+        and not ip.is_link_local
+        and not ip.is_reserved
+        and not ip.is_multicast
+    )
 
 
 def is_safe_public_url(url: str) -> bool:
-    """Prevent basic SSRF against localhost/private/link-local networks unless explicitly local test."""
+    """Prevent SSRF including DNS resolution to private/loopback/link-local networks."""
     try:
         parsed = urlparse(url)
         if parsed.scheme not in ("http", "https") or not parsed.hostname:
             return False
-        host = parsed.hostname.lower()
-        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+        host = parsed.hostname.lower().strip(".")
+        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.endswith((".local", ".internal")):
             return False
         try:
             ip = ipaddress.ip_address(host)
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return False
+            return _is_global_ip(ip)
         except ValueError:
             pass
+
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        try:
+            addr_infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError:
+            # Allow test domains that fail DNS in offline CI only if not known-local, or fail closed
+            return False
+        if not addr_infos:
+            return False
+        for info in addr_infos:
+            resolved_ip = ipaddress.ip_address(info[4][0])
+            if not _is_global_ip(resolved_ip):
+                return False
         return True
     except Exception:
         return False
@@ -79,7 +104,8 @@ class WebhookService:
                 "data": payload,
             }
             body_str = json.dumps(envelope, separators=(",", ":"))
-            sig = sign_webhook_payload(hook["signing_secret"], ts, body_str)
+            raw_signing_secret = decrypt_secret(hook["signing_secret"])
+            sig = sign_webhook_payload(raw_signing_secret, ts, body_str)
             delivery_id = f"whd_{uuid.uuid4().hex[:10]}"
 
             status_str = "failed"
@@ -89,9 +115,9 @@ class WebhookService:
                 resp_body = "Blocked unsafe or private webhook target URL"
             else:
                 try:
-                    resp = requests.post(
+                    resp = httpx.post(
                         hook["url"],
-                        data=body_str,
+                        content=body_str,
                         headers={
                             "Content-Type": "application/json",
                             "X-Trivaana-Signature": sig,
@@ -100,6 +126,7 @@ class WebhookService:
                             "X-Trivaana-Event": event_type,
                         },
                         timeout=6.0,
+                        follow_redirects=False,
                     )
                     resp_code = resp.status_code
                     resp_body = resp.text[:500]

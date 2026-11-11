@@ -61,12 +61,13 @@ class PostgresCompatCursor:
 
 
 class PostgresCompatConnection:
-    """Presents sqlite3-compatible cursor/commit/close semantics backed by psycopg3."""
+    """Presents sqlite3-compatible cursor/commit/close semantics backed by psycopg3 or psycopg_pool."""
 
     engine_name = "postgresql"
 
-    def __init__(self, pg_conn: Any):
+    def __init__(self, pg_conn: Any, release_fn: Any = None):
         self._conn = pg_conn
+        self._release_fn = release_fn
 
     def cursor(self) -> PostgresCompatCursor:
         return PostgresCompatCursor(self._conn.cursor())
@@ -85,7 +86,36 @@ class PostgresCompatConnection:
         self._conn.rollback()
 
     def close(self) -> None:
-        self._conn.close()
+        if self._release_fn is not None:
+            self._release_fn(self._conn)
+        else:
+            self._conn.close()
+
+
+_PG_POOL: Any = None
+_PG_POOL_DSN: str = ""
+
+
+def _get_pg_pool():
+    global _PG_POOL, _PG_POOL_DSN
+    if not settings.has_postgres:
+        return None
+    if _PG_POOL is None or _PG_POOL_DSN != settings.DATABASE_URL:
+        from psycopg.rows import dict_row  # type: ignore
+        from psycopg_pool import ConnectionPool  # type: ignore
+
+        pool = ConnectionPool(
+            conninfo=settings.DATABASE_URL,
+            min_size=1,
+            max_size=20,
+            timeout=2.0,
+            open=False,
+            kwargs={"row_factory": dict_row, "connect_timeout": 2},
+        )
+        pool.open(wait=True, timeout=2.0)
+        _PG_POOL = pool
+        _PG_POOL_DSN = settings.DATABASE_URL
+    return _PG_POOL
 
 
 def get_active_driver() -> str:
@@ -101,6 +131,10 @@ def get_active_driver() -> str:
 def get_connection(db_path: Optional[Path] = None) -> Any:
     if db_path is None and settings.has_postgres:
         try:
+            pool = _get_pg_pool()
+            if pool is not None:
+                pg_conn = pool.getconn()
+                return PostgresCompatConnection(pg_conn, release_fn=pool.putconn)
             import psycopg  # type: ignore
             from psycopg.rows import dict_row  # type: ignore
             pg_conn = psycopg.connect(settings.DATABASE_URL, row_factory=dict_row)

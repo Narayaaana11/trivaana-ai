@@ -250,3 +250,80 @@ def admin_list_audit_logs(
         logs.append(d)
     return {"audit_logs": logs}
 
+
+@router.get("/finance/summary")
+def admin_finance_summary(
+    admin_user: dict = Depends(require_super_admin),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Separate Prepaid Wallet Liabilities, Earned Usage Revenue, Promotional Credits, and Provider COGS."""
+    cur = db.cursor()
+    cur.execute("SELECT COALESCE(SUM(wallet_balance_paise), 0) as total_liabilities_paise FROM tenants")
+    liabilities = cur.fetchone()["total_liabilities_paise"]
+
+    cur.execute("SELECT COALESCE(SUM(amount_paise), 0) as earned_usage_paise FROM transactions WHERE type = 'debit'")
+    earned_usage = cur.fetchone()["earned_usage_paise"]
+
+    cur.execute("SELECT COALESCE(SUM(amount_paise), 0) as purchased_credits_paise FROM transactions WHERE type = 'credit' AND invoice_id IS NOT NULL")
+    purchased = cur.fetchone()["purchased_credits_paise"]
+
+    cur.execute("SELECT COALESCE(SUM(amount_paise), 0) as promo_paise FROM promo_credits")
+    promo = cur.fetchone()["promo_paise"]
+
+    cur.execute("SELECT COALESCE(SUM(estimated_cost_paise), 0) as cogs_paise FROM provider_usage_costs")
+    cogs = cur.fetchone()["cogs_paise"]
+
+    return {
+        "wallet_liabilities_paise": liabilities,
+        "purchased_credits_paise": purchased,
+        "earned_usage_revenue_paise": earned_usage,
+        "promotional_credits_paise": promo,
+        "provider_cogs_paise": cogs,
+        "gross_margin_paise": earned_usage - cogs,
+    }
+
+
+@router.get("/providers/health")
+def admin_providers_health(admin_user: dict = Depends(require_super_admin)):
+    from core.config import settings
+    return {
+        "ai_llm": {"gemini": settings.has_gemini, "openai": settings.has_openai},
+        "voice": {"sarvam": settings.has_sarvam, "elevenlabs": settings.has_elevenlabs, "livekit": settings.has_livekit},
+        "telephony": {"exotel": settings.has_exotel, "twilio": settings.has_twilio, "plivo": settings.has_plivo, "vobiz": settings.has_vobiz},
+        "payments": {"razorpay": settings.has_razorpay},
+        "infra": {"postgres": settings.has_postgres, "redis": settings.has_redis, "s3": settings.has_s3_storage, "temporal": settings.has_temporal, "langfuse": settings.has_langfuse},
+    }
+
+
+class KillSwitchRequest(BaseModel):
+    outbound_paused: bool
+    reason: str = "Emergency maintenance"
+
+
+@router.post("/emergency/kill-switch")
+def admin_emergency_kill_switch(
+    req: KillSwitchRequest,
+    admin_user: dict = Depends(require_super_admin),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    now = datetime.now(timezone.utc).isoformat()
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO platform_settings (key, value_json, updated_by, updated_at)
+        VALUES ('emergency_outbound_pause', ?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json, updated_by = excluded.updated_by, updated_at = excluded.updated_at
+        """,
+        (json.dumps({"paused": req.outbound_paused, "reason": req.reason}), admin_user["id"], now),
+    )
+    AuditService.log_event(
+        db,
+        action="admin.emergency_kill_switch",
+        resource_type="platform",
+        actor_user_id=admin_user["id"],
+        actor_email=admin_user.get("email"),
+        metadata={"outbound_paused": req.outbound_paused, "reason": req.reason},
+        commit=True,
+    )
+    return {"status": "updated", "outbound_paused": req.outbound_paused, "reason": req.reason}
+

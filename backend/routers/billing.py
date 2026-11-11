@@ -168,6 +168,7 @@ def update_subscription(
 def create_razorpay_order(
     req: CreateOrderRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
+    current_user: Dict[str, Any] = Depends(require_roles(["owner", "admin"])),
     conn: sqlite3.Connection = Depends(get_db)
 ):
     amount_paise = int(round(req.amount_inr * 100))
@@ -239,24 +240,41 @@ def verify_and_credit_payment(
     amount_paise = order["amount_paise"]
     amount_inr = amount_paise / 100.0
     now = datetime.now(timezone.utc).isoformat()
-    cur.execute(
-        "UPDATE payment_orders SET status = 'paid', razorpay_payment_id = ?, updated_at = ? WHERE id = ?",
-        (req.payment_id, now, order["id"])
-    )
-    conn.commit()
-
-    idempotency_key = f"razorpay_{req.payment_id}"
+    idempotency_key = f"razorpay_order_{order['id']}"
     invoice_id = f"TAX-2026-{req.payment_id[-6:].upper()}"
     desc = f"Prepaid Top-up: ₹{amount_inr:.2f} (Order: {req.order_id})"
 
-    return BillingService.credit_wallet(
-        conn=conn,
-        tenant_id=current_tenant["id"],
-        amount_paise=amount_paise,
-        description=desc,
-        idempotency_key=idempotency_key,
-        invoice_id=invoice_id
-    )
+    try:
+        cur.execute(
+            "UPDATE payment_orders SET status = 'paid', razorpay_payment_id = ?, updated_at = ? WHERE id = ? AND status != 'paid'",
+            (req.payment_id, now, order["id"]),
+        )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return {
+                "status": "already_paid",
+                "order_id": order["id"],
+                "amount_paise": amount_paise,
+                "amount_inr": amount_inr,
+                "message": "Payment has already been processed and credited to your wallet.",
+            }
+        result = BillingService.credit_wallet(
+            conn=conn,
+            tenant_id=current_tenant["id"],
+            amount_paise=amount_paise,
+            description=desc,
+            idempotency_key=idempotency_key,
+            invoice_id=invoice_id,
+            commit=False,
+        )
+        conn.commit()
+        return result
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Atomic payment commit failed: {exc}",
+        )
 
 
 @router.post("/razorpay-webhook")
@@ -274,8 +292,16 @@ async def handle_razorpay_webhook(request: Request, conn: sqlite3.Connection = D
     except Exception:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid JSON payload in webhook body.")
 
+    event_name = str(event.get("event") or "").lower()
+    if event_name not in ("payment.captured", "order.paid"):
+        return {"status": "ignored", "reason": f"Unhandled webhook event '{event_name}'."}
+
     payload = event.get("payload", {})
     payment_entity = payload.get("payment", {}).get("entity", {})
+    payment_status = str(payment_entity.get("status") or "").lower()
+    if payment_entity and payment_status not in ("captured",):
+        return {"status": "ignored", "reason": f"Payment status '{payment_status}' is not captured."}
+
     order_id = payment_entity.get("order_id") or payload.get("order", {}).get("entity", {}).get("id")
     payment_id = payment_entity.get("id")
 
@@ -295,33 +321,42 @@ async def handle_razorpay_webhook(request: Request, conn: sqlite3.Connection = D
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook payment amount mismatch with recorded order.")
 
     now = datetime.now(timezone.utc).isoformat()
-    cur.execute(
-        "UPDATE payment_orders SET status = 'paid', razorpay_payment_id = ?, updated_at = ? WHERE id = ?",
-        (payment_id or "webhook_verified", now, order["id"])
-    )
-    conn.commit()
-
     amount_paise = order["amount_paise"]
     amount_inr = amount_paise / 100.0
-    idempotency_key = f"razorpay_webhook_{payment_id or order_id}"
+    idempotency_key = f"razorpay_order_{order_id}"
     invoice_id = f"TAX-2026-{(payment_id or order_id)[-6:].upper()}"
     desc = f"Prepaid Top-up (Webhook): ₹{amount_inr:.2f} (Order: {order_id})"
 
-    result = BillingService.credit_wallet(
-        conn=conn,
-        tenant_id=order["tenant_id"],
-        amount_paise=amount_paise,
-        description=desc,
-        idempotency_key=idempotency_key,
-        invoice_id=invoice_id
-    )
-    return {"status": "success", "order_id": order_id, "amount_paise": amount_paise, "wallet": result}
+    try:
+        cur.execute(
+            "UPDATE payment_orders SET status = 'paid', razorpay_payment_id = ?, updated_at = ? WHERE id = ? AND status != 'paid'",
+            (payment_id or "webhook_verified", now, order["id"]),
+        )
+        if cur.rowcount == 0:
+            conn.rollback()
+            return {"status": "already_processed", "order_id": order_id}
+
+        result = BillingService.credit_wallet(
+            conn=conn,
+            tenant_id=order["tenant_id"],
+            amount_paise=amount_paise,
+            description=desc,
+            idempotency_key=idempotency_key,
+            invoice_id=invoice_id,
+            commit=False,
+        )
+        conn.commit()
+        return {"status": "success", "order_id": order_id, "amount_paise": amount_paise, "wallet": result}
+    except Exception as exc:
+        conn.rollback()
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Atomic webhook commit failed: {exc}")
 
 
 @router.post("/sandbox-topup")
 def sandbox_topup(
     req: SandboxTopupRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
+    current_user: Dict[str, Any] = Depends(require_roles(["owner", "admin"])),
     conn: sqlite3.Connection = Depends(get_db)
 ):
     if settings.ENVIRONMENT.lower() in ("production", "prod") and not settings.ALLOW_SANDBOX_TOPUP:

@@ -192,7 +192,32 @@ def public_lead_intake(
             "reason": compliance["reason"],
         }
 
-    # Initiate call
+    # Schedule via worker if delay_seconds > 0, else initiate immediately
+    if req.delay_seconds and req.delay_seconds > 0:
+        from worker.tasks import schedule_delayed_intake_call
+        sched = schedule_delayed_intake_call(
+            delay_seconds=req.delay_seconds,
+            tenant_id=tenant_id,
+            lead_id=lead_id,
+            contact_name=req.name.strip(),
+            phone=clean_phone,
+            language=agent["language"],
+            agent_id=agent["id"],
+            call_category=req.call_category,
+            is_sandbox=req.is_sandbox,
+        )
+        return {
+            "status": "call_scheduled",
+            "lead_id": lead_id,
+            "duplicate_detected": duplicate_detected,
+            "call_initiated": False,
+            "scheduled": True,
+            "task_id": sched.get("task_id"),
+            "scheduler_backend": sched.get("backend"),
+            "delay_seconds": req.delay_seconds,
+        }
+
+    # Initiate call immediately
     call_res = CallService.initiate_call(
         conn=db,
         tenant_id=tenant_id,

@@ -104,11 +104,14 @@ class ExotelTelephonyProvider(BaseTelephonyProvider):
         caller_id = self._exotel_dial_number(from_phone or self.caller_id)
         endpoint = f"{self.base_url}/Calls/connect.json"
         payload = {
-            "From": to_phone,
+            "From": caller_id,
             "To": to_phone,
             "CallerId": caller_id,
             "CallType": "trans",
         }
+        exoml_url = (extra_data or {}).get("exoml_url") or passthru_url
+        if exoml_url:
+            payload["Url"] = exoml_url
         if stream_url:
             payload["StreamUrl"] = stream_url
             payload["StreamType"] = "bidirectional"

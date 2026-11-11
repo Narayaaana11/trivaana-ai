@@ -132,7 +132,8 @@ class BillingService:
         amount_paise: int,
         description: str,
         idempotency_key: str,
-        invoice_id: Optional[str] = None
+        invoice_id: Optional[str] = None,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         if amount_paise <= 0:
             raise ValueError("Credit amount must be strictly positive")
@@ -167,7 +168,8 @@ class BillingService:
         """, (tx_id, tenant_id, amount_paise, description, inv_id, new_balance_paise, idempotency_key, now))
 
         BillingService._record_invoice(conn, tenant_id, inv_id, amount_paise, description)
-        conn.commit()
+        if commit:
+            conn.commit()
 
         return {
             "status": "success",

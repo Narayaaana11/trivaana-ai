@@ -9,9 +9,10 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
-import requests
+import httpx
 
 from core.config import settings
+from core.vault import decrypt_config_json
 from providers import get_telephony_provider
 from services.webhook_service import is_safe_public_url
 
@@ -53,19 +54,32 @@ class ActionService:
                     exec_status = "not_configured"
                     result = {"configured": False, "message": "Google Calendar integration is not connected for this workspace."}
             else:
-                cfg = json.loads(conn_row["config_json"] or "{}") if conn_row else {}
+                cfg = decrypt_config_json(conn_row["config_json"] or "{}") if conn_row else {}
                 access_token = cfg.get("access_token")
                 if access_token:
                     try:
-                        # Real Google Calendar FreeBusy / Event API call
-                        resp = requests.get(
-                            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-                            headers={"Authorization": f"Bearer {access_token}"},
-                            params={"maxResults": 5},
-                            timeout=8.0,
-                        )
-                        exec_status = "executed" if resp.status_code == 200 else "failed"
-                        result = {"http_status": resp.status_code, "calendar_response": resp.json() if resp.status_code == 200 else resp.text[:300]}
+                        op = str(arguments.get("operation") or "list_events").lower()
+                        if op == "book_appointment" and arguments.get("start") and arguments.get("end"):
+                            resp = httpx.post(
+                                "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                                json={
+                                    "summary": arguments.get("title", "Trivaana AI Scheduled Meeting"),
+                                    "description": arguments.get("notes", ""),
+                                    "start": {"dateTime": arguments["start"], "timeZone": "Asia/Kolkata"},
+                                    "end": {"dateTime": arguments["end"], "timeZone": "Asia/Kolkata"},
+                                },
+                                timeout=8.0,
+                            )
+                        else:
+                            resp = httpx.get(
+                                "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                                headers={"Authorization": f"Bearer {access_token}"},
+                                params={"maxResults": 5},
+                                timeout=8.0,
+                            )
+                        exec_status = "executed" if resp.status_code in (200, 201) else "failed"
+                        result = {"http_status": resp.status_code, "calendar_response": resp.json() if resp.status_code in (200, 201) else resp.text[:300]}
                     except Exception as e:
                         exec_status = "failed"
                         result = {"error": str(e)}
@@ -110,7 +124,7 @@ class ActionService:
                     },
                 }
                 try:
-                    resp = requests.post(
+                    resp = httpx.post(
                         url,
                         headers={"Authorization": f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}", "Content-Type": "application/json"},
                         json=payload,
@@ -132,14 +146,31 @@ class ActionService:
                 exec_status = "simulated" if is_sandbox else "not_configured"
                 result = {"configured": False, "simulated": is_sandbox, "message": "Google Sheets integration is not connected."}
             else:
-                cfg = json.loads(conn_row["config_json"] or "{}")
-                webhook_or_token = cfg.get("access_token")
-                if not webhook_or_token:
+                cfg = decrypt_config_json(conn_row["config_json"] or "{}")
+                access_token = cfg.get("access_token")
+                spreadsheet_id = cfg.get("spreadsheet_id")
+                sheet_range = cfg.get("range", "Sheet1!A1")
+                if not access_token or not spreadsheet_id:
                     exec_status = "not_configured"
-                    result = {"configured": False, "message": "Google Sheets OAuth token missing."}
+                    result = {"configured": False, "message": "Google Sheets access_token or spreadsheet_id missing."}
+                elif is_sandbox:
+                    exec_status = "simulated"
+                    result = {"simulated": True, "spreadsheet_id": spreadsheet_id, "row_payload": arguments}
                 else:
-                    exec_status = "executed"
-                    result = {"spreadsheet_id": cfg.get("spreadsheet_id"), "row_payload": arguments}
+                    try:
+                        row_values = [str(v) for v in arguments.values()]
+                        resp = httpx.post(
+                            f"https://sheets.googleapis.com/v4/spreadsheets/{spreadsheet_id}/values/{sheet_range}:append",
+                            params={"valueInputOption": "USER_ENTERED"},
+                            headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                            json={"values": [row_values]},
+                            timeout=8.0,
+                        )
+                        exec_status = "executed" if resp.status_code in (200, 201) else "failed"
+                        result = {"http_status": resp.status_code, "spreadsheet_id": spreadsheet_id}
+                    except Exception as e:
+                        exec_status = "failed"
+                        result = {"error": str(e)}
 
         elif action_type == "custom_api":
             cfg = {}
@@ -158,7 +189,14 @@ class ActionService:
                 result = {"error": "Invalid or blocked custom API endpoint URL."}
             else:
                 try:
-                    resp = requests.request(method, endpoint, json=arguments, headers=headers, timeout=min(timeout_s, 15.0))
+                    resp = httpx.request(
+                        method,
+                        endpoint,
+                        json=arguments,
+                        headers=headers,
+                        timeout=min(timeout_s, 15.0),
+                        follow_redirects=False,
+                    )
                     exec_status = "executed" if 200 <= resp.status_code < 300 else "failed"
                     result = {"http_status": resp.status_code, "body": resp.text[:500]}
                 except Exception as e:

@@ -26,8 +26,43 @@ def get_worker_capabilities() -> dict:
             and os.environ.get("LIVEKIT_API_SECRET")
         ),
         "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
+        "gemini_configured": bool(os.environ.get("GEMINI_API_KEY")),
+        "sarvam_configured": bool(os.environ.get("SARVAM_API_KEY")),
         "sip_configured": bool(os.environ.get("LIVEKIT_SIP_CONFIG")),
     }
+
+
+def build_agent_context_instructions(metadata: dict) -> str:
+    """Enrich LiveKit agent instructions with Knowledge Base RAG chunks from PostgreSQL/SQLite."""
+    base_instructions = metadata.get(
+        "system_prompt",
+        "You are a helpful, concise Trivaana AI voice employee. Assist the caller politely.",
+    )
+    tenant_id = metadata.get("tenant_id")
+    agent_id = metadata.get("agent_id")
+    if not tenant_id:
+        return base_instructions
+    try:
+        from database import get_connection
+        from services.knowledge_service import KnowledgeService
+
+        conn = get_connection()
+        try:
+            hits = KnowledgeService.search(
+                conn=conn,
+                tenant_id=tenant_id,
+                query=metadata.get("rag_seed_query") or base_instructions[:200],
+                agent_id=agent_id,
+                top_k=4,
+            )
+        finally:
+            conn.close()
+        if hits:
+            kb_block = "\n".join(f"- [{h['title']}]: {h['content']}" for h in hits)
+            return f"{base_instructions}\n\nVerified Business Knowledge:\n{kb_block}"
+    except Exception as exc:
+        logger.warning("Failed to preload KB context for LiveKit agent: %s", exc)
+    return base_instructions
 
 
 def run_worker():
@@ -54,10 +89,7 @@ def run_worker():
             except Exception:
                 pass
 
-        instructions = metadata.get(
-            "system_prompt",
-            "You are a helpful, concise Trivaana AI voice employee. Assist the caller politely.",
-        )
+        instructions = build_agent_context_instructions(metadata)
         lang = metadata.get("language", "te-IN")
         provider = str(metadata.get("provider", "sarvam")).lower()
         voice_id = metadata.get("voice_id", "meera" if provider == "sarvam" else "alloy")
@@ -85,6 +117,24 @@ def run_worker():
         greeting = metadata.get("greeting_message")
         if greeting:
             await session.generate_reply(instructions=f"Say this greeting warmly: {greeting}")
+
+        # Persist session start event when call_id is present in room metadata
+        call_id = metadata.get("call_id")
+        tenant_id = metadata.get("tenant_id")
+        if call_id and tenant_id:
+            try:
+                from database import get_connection
+                conn = get_connection()
+                try:
+                    conn.execute(
+                        "UPDATE calls SET status = 'in_progress' WHERE id = ? AND tenant_id = ?",
+                        (call_id, tenant_id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+            except Exception as exc:
+                logger.warning("Failed to update call status for %s: %s", call_id, exc)
 
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
 

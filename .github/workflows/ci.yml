@@ -1,0 +1,59 @@
+name: Trivaana AI CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: trivaana_test
+          POSTGRES_USER: trivaana
+          POSTGRES_PASSWORD: trivaana_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Run Alembic migrations against Postgres
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://trivaana:trivaana_ci_password@localhost:5432/trivaana_test
+        run: alembic upgrade head
+      - name: Run Pytest suite
+        working-directory: backend
+        run: pytest -v tests
+
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Lint, Test, and Build
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm test
+          npm run build
+

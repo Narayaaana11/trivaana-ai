@@ -25,6 +25,10 @@ import {
   X,
   PanelLeftClose,
   PanelLeftOpen,
+  CalendarClock,
+  Workflow,
+  LifeBuoy,
+  Headphones,
 } from 'lucide-react';
 import { Tenant, AnalyticsStats } from '@/types/trivaana';
 
@@ -35,6 +39,8 @@ export type DashboardTab =
   | 'instant-leads'
   | 'inbound'
   | 'leads'
+  | 'appointments'
+  | 'workflows'
   | 'intelligence'
   | 'broadcast'
   | 'knowledge'
@@ -44,6 +50,8 @@ export type DashboardTab =
   | 'billing'
   | 'settings'
   | 'developers'
+  | 'support'
+  | 'staff-portal'
   | 'super-admin';
 
 interface AppSidebarProps {
@@ -90,6 +98,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
       title: 'RESULTS',
       items: [
         { id: 'leads', label: 'Leads', icon: Users },
+        { id: 'appointments', label: 'Appointments', icon: CalendarClock },
         { id: 'intelligence', label: 'Conversations', icon: MessageSquareText },
         { id: 'analytics', label: 'Performance', icon: BarChart3 },
       ],
@@ -101,6 +110,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         { id: 'instant-leads', label: 'Instant leads', icon: Zap },
         { id: 'inbound', label: 'Incoming calls', icon: PhoneIncoming },
         { id: 'broadcast', label: 'Voice broadcast', icon: Megaphone },
+        { id: 'workflows', label: 'Workflows', icon: Workflow },
       ],
     },
     {
@@ -112,6 +122,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
         { id: 'billing', label: 'Credits & billing', icon: Wallet },
         { id: 'settings', label: 'Settings', icon: Settings },
         { id: 'developers', label: 'Developers', icon: Code2 },
+        { id: 'support', label: 'Support', icon: LifeBuoy },
       ],
     },
   ];
@@ -119,7 +130,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   if (isSuperAdmin) {
     GROUPS.push({
       title: 'PLATFORM',
-      items: [{ id: 'super-admin', label: 'Super Admin', icon: ShieldAlert, badge: 'Admin' }],
+      items: [
+        { id: 'staff-portal', label: 'Staff Portal', icon: Headphones },
+        { id: 'super-admin', label: 'Super Admin', icon: ShieldAlert, badge: 'Admin' },
+      ],
     });
   }
 

@@ -30,12 +30,23 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    env_file:
-      - .env.example
     environment:
       PORT: "8001"
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET: ${JWT_SECRET:-trivaana-dev-compose-jwt-secret-change-me-32chars}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-trivaana-dev-compose-vault-key-change-me}
       DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
       REDIS_URL: redis://redis:6379/0
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID:-}
+      RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET:-}
+      RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET:-}
     ports:
       - "8001:8001"
     depends_on:
@@ -51,17 +62,40 @@ services:
 
   worker:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: python -m worker.tasks
-    env_file:
-      - .env.example
+      context: .
+      dockerfile: workers/Dockerfile
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET: ${JWT_SECRET:-trivaana-dev-compose-jwt-secret-change-me-32chars}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-trivaana-dev-compose-vault-key-change-me}
       DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
       REDIS_URL: redis://redis:6379/0
     depends_on:
-      - backend
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  voice-engine:
+    profiles: ["voice"]
+    build:
+      context: .
+      dockerfile: voice-engine/Dockerfile
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
+      REDIS_URL: redis://redis:6379/0
+      LIVEKIT_URL: ${LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   frontend:
     build:
@@ -72,20 +106,5 @@ services:
     depends_on:
       - backend
 
-  speech:
-    profiles: ["speech"]
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    command: python -m uvicorn voice_engine.speech_microservice:app --host 0.0.0.0 --port 8002
-    environment:
-      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
-      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
-      INDIC_CONFORMER_MODEL_DIR: ${INDIC_CONFORMER_MODEL_DIR:-}
-      INDICF5_MODEL_DIR: ${INDICF5_MODEL_DIR:-}
-    ports:
-      - "8002:8002"
-
 volumes:
   pgdata:
-

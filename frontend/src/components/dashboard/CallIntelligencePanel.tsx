@@ -92,8 +92,10 @@ export const CallIntelligencePanel: React.FC = () => {
 
   const handleSimulateInbound = async () => {
     try {
+      const numsRes = await trivaanaApi.getPhoneNumbers().catch(() => ({ phone_numbers: [] }));
+      const targetNum = numsRes.phone_numbers?.[0]?.phone_number || '+918047361234';
       const res = await trivaanaApi.simulateInboundCall({
-        to_number: '+918047361234',
+        to_number: targetNum,
         from_number: '+919848012345',
         caller_name: 'Venkat Rao (Inbound Test)',
         initial_query: '3BHK Villa pricing',

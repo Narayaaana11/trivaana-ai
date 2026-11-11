@@ -23,7 +23,7 @@ const TIERS = [
     ratePerMin: '₹6.50/min',
     features: [
       'Prepaid Wallet Billing in Integer Paise',
-      '2 Concurrent Calling Lines',
+      '5 Concurrent Calling Lines',
       'Telugu, Hindi & Indian English',
       'CSV Lead List Upload & Row Validation',
       'Full Call Transcripts & Recording Audio',
@@ -44,7 +44,7 @@ const TIERS = [
     ratePerMin: '₹6.50/min',
     features: [
       'Prepaid Wallet Billing (₹6.50/min Standard, ₹8.50/min Premium)',
-      '10 Concurrent Calling Lines',
+      '15 Concurrent Calling Lines',
       'All 7 Indian Dialects (Telugu, Hindi, Tamil, Kannada, etc.)',
       'Autonomous OSM Lead Scout (Vizag, Hyd, Blr)',
       'Automated WhatsApp Post-Call Dispatcher',
@@ -99,7 +99,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
             </span>
           </h2>
           <p className="mt-4 text-base sm:text-lg text-[#525260]">
-            Standard Indian voices at ₹5.00/min or Premium neural voices at ₹6.80/min. Unanswered calls cost ₹0, and workspace seats are unlimited.
+            Standard Indian voices at ₹6.50/min or Premium neural voices at ₹8.50/min. Unanswered calls cost ₹0, and workspace seats are unlimited.
           </p>
         </div>
 
@@ -112,7 +112,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
               <div className="text-xs text-[#525260]">Low-latency Telugu, Hindi, Tamil, Kannada &amp; more</div>
             </div>
             <div className="text-right shrink-0 pl-4">
-              <div className="font-display text-2xl font-extrabold text-[#0f0f14] tabular-nums">₹5.00<span className="text-xs font-medium text-[#6e6e7e]">/min</span></div>
+              <div className="font-display text-2xl font-extrabold text-[#0f0f14] tabular-nums">₹6.50<span className="text-xs font-medium text-[#6e6e7e]">/min</span></div>
               <div className="text-[10px] text-emerald-700 font-bold">₹0 unanswered</div>
             </div>
           </div>
@@ -123,7 +123,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
               <div className="text-xs text-[#525260]">Ultra-expressive empathy &amp; custom cloned brand voices</div>
             </div>
             <div className="text-right shrink-0 pl-4">
-              <div className="font-display text-2xl font-extrabold text-[#ff5500] tabular-nums">₹6.80<span className="text-xs font-medium text-[#6e6e7e]">/min</span></div>
+              <div className="font-display text-2xl font-extrabold text-[#ff5500] tabular-nums">₹8.50<span className="text-xs font-medium text-[#6e6e7e]">/min</span></div>
               <div className="text-[10px] text-emerald-700 font-bold">Billed per 30s pulse</div>
             </div>
           </div>

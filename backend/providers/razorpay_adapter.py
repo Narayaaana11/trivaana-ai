@@ -6,7 +6,7 @@ and raw-body webhook signature verification with dev sandbox fallback.
 
 import hmac
 import hashlib
-import requests
+import httpx
 import uuid
 from typing import Dict, Any, Optional
 from core.config import settings
@@ -74,11 +74,11 @@ class RazorpayPaymentProvider(BasePaymentProvider):
             "payment_capture": 1
         }
 
-        resp = requests.post(
+        resp = httpx.post(
             endpoint,
             auth=(self.key_id, self.key_secret),
             json=payload,
-            timeout=10.0
+            timeout=10.0,
         )
         if resp.status_code in (200, 201):
             data = resp.json()
@@ -100,7 +100,10 @@ class RazorpayPaymentProvider(BasePaymentProvider):
         return hmac.compare_digest(expected_sig, signature)
 
     def verify_webhook_signature(self, raw_body: bytes, signature: str) -> bool:
-        secret = self.webhook_secret or self.key_secret
+        if settings.ENVIRONMENT.lower() in ("production", "prod"):
+            secret = self.webhook_secret
+        else:
+            secret = self.webhook_secret or self.key_secret
         if not secret:
             return False
 

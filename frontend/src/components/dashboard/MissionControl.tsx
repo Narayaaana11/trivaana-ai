@@ -16,6 +16,11 @@ import { FinancialLedgerPanel } from './FinancialLedgerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { DevelopersPanel } from './DevelopersPanel';
 import { SuperAdminPanel } from './SuperAdminPanel';
+import { AppointmentsPanel } from './AppointmentsPanel';
+import { WorkflowsPanel } from './WorkflowsPanel';
+import { SupportTicketsPanel } from './SupportTicketsPanel';
+import { AdminPortal } from '@/apps/admin/AdminPortal';
+import { StaffPortal } from '@/apps/staff/StaffPortal';
 import { LiveCallSimulatorModal } from './LiveCallSimulatorModal';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Tenant, AnalyticsStats, CallLog } from '@/types/trivaana';
@@ -57,6 +62,8 @@ const TAB_TO_HASH: Record<DashboardTab, string> = {
   overview: '#/home',
   agents: '#/employees',
   leads: '#/leads',
+  appointments: '#/appointments',
+  workflows: '#/workflows',
   intelligence: '#/conversations',
   analytics: '#/performance',
   campaigns: '#/campaigns',
@@ -69,6 +76,8 @@ const TAB_TO_HASH: Record<DashboardTab, string> = {
   billing: '#/billing',
   settings: '#/settings',
   developers: '#/developers',
+  support: '#/support',
+  'staff-portal': '#/staff',
   'super-admin': '#/admin',
 };
 
@@ -82,6 +91,8 @@ const DEEP_HASH_MAP: Record<string, ResolvedHashRoute> = {
   '#/employees': { tab: 'agents' },
   '#/employees/new': { tab: 'agents', sub: 'new' },
   '#/leads': { tab: 'leads' },
+  '#/appointments': { tab: 'appointments' },
+  '#/workflows': { tab: 'workflows' },
   '#/conversations': { tab: 'intelligence' },
   '#/performance': { tab: 'analytics' },
   '#/analytics': { tab: 'analytics' },
@@ -115,6 +126,8 @@ const DEEP_HASH_MAP: Record<string, ResolvedHashRoute> = {
   '#/developers/keys': { tab: 'developers', sub: 'keys' },
   '#/developers/webhooks': { tab: 'developers', sub: 'webhooks' },
   '#/developers/logs': { tab: 'developers', sub: 'logs' },
+  '#/support': { tab: 'support' },
+  '#/staff': { tab: 'staff-portal' },
   '#/admin': { tab: 'super-admin' },
 };
 
@@ -130,6 +143,8 @@ const QUICK_JUMP_ITEMS: { id: DashboardTab; label: string; keywords: string }[] 
   { id: 'overview', label: 'Home & Prompt Builder', keywords: 'home overview prompt create' },
   { id: 'agents', label: 'AI Employees (Your Team)', keywords: 'agents employees bot prompts voice flow' },
   { id: 'leads', label: 'Leads & CRM Pipeline', keywords: 'leads contacts csv pipeline' },
+  { id: 'appointments', label: 'Appointments & Calendar', keywords: 'appointments calendar slots booking' },
+  { id: 'workflows', label: 'Automation Workflows', keywords: 'workflows temporal automation builder' },
   { id: 'intelligence', label: 'Conversations & Transcripts', keywords: 'calls transcripts recordings summaries' },
   { id: 'analytics', label: 'Performance & Analytics', keywords: 'analytics charts metrics' },
   { id: 'campaigns', label: 'Bulk Campaigns & Lists', keywords: 'campaigns bulk csv dialer' },
@@ -142,6 +157,7 @@ const QUICK_JUMP_ITEMS: { id: DashboardTab; label: string; keywords: string }[] 
   { id: 'billing', label: 'Credits & Billing', keywords: 'billing wallet razorpay gst invoices' },
   { id: 'settings', label: 'Settings, DNC & Memory', keywords: 'settings dnc compliance memory team' },
   { id: 'developers', label: 'Developers, API Keys & Webhooks', keywords: 'developers api keys webhooks logs' },
+  { id: 'support', label: 'Support Tickets', keywords: 'support helpdesk tickets' },
 ];
 
 const TOUR_STEPS: { title: string; body: string; tab: DashboardTab }[] = [
@@ -609,6 +625,8 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                 />
               )}
               {currentTab === 'leads' && <LeadManagementPanel onLeadCallTriggered={refreshAllData} />}
+              {currentTab === 'appointments' && <AppointmentsPanel />}
+              {currentTab === 'workflows' && <WorkflowsPanel />}
               {currentTab === 'intelligence' && <CallIntelligencePanel />}
               {currentTab === 'broadcast' && <VoiceBroadcastPanel />}
               {currentTab === 'knowledge' && <KnowledgeBasePanel />}
@@ -650,7 +668,23 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                   }
                 />
               )}
-              {currentTab === 'super-admin' && <SuperAdminPanel />}
+              {currentTab === 'support' && <SupportTicketsPanel />}
+              {currentTab === 'staff-portal' && (
+                <StaffPortal
+                  hasStaffAccess={Boolean(userProfile?.is_super_admin)}
+                  onExitToCustomer={() => setCurrentTab('overview')}
+                />
+              )}
+              {currentTab === 'super-admin' && (
+                userProfile?.is_super_admin ? (
+                  <AdminPortal
+                    isSuperAdmin={true}
+                    onExitToCustomer={() => setCurrentTab('overview')}
+                  />
+                ) : (
+                  <SuperAdminPanel />
+                )
+              )}
             </div>
           </main>
 

@@ -5,7 +5,7 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS tenants (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
-    api_key_hash TEXT NOT NULL,
+    api_key_hash TEXT UNIQUE NOT NULL,
     wallet_balance_paise INTEGER NOT NULL DEFAULT 500000,
     currency TEXT NOT NULL DEFAULT 'INR',
     plan TEXT NOT NULL DEFAULT 'growth',
@@ -21,12 +21,15 @@ CREATE TABLE IF NOT EXISTS tenants (
 CREATE TABLE IF NOT EXISTS users (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
-    email TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
     hashed_password TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'owner',
+    staff_role TEXT,
     full_name TEXT NOT NULL,
     email_verified INTEGER NOT NULL DEFAULT 1,
     is_super_admin INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    token_version INTEGER NOT NULL DEFAULT 1,
     avatar_url TEXT,
     last_login_at TEXT,
     created_at TEXT NOT NULL,
@@ -64,7 +67,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
     key_prefix TEXT NOT NULL,
-    key_hash TEXT NOT NULL,
+    key_hash TEXT UNIQUE NOT NULL,
     scopes_json TEXT NOT NULL DEFAULT '["*"]',
     last_used_at TEXT,
     revoked_at TEXT,
@@ -77,7 +80,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    slug TEXT,
+    slug TEXT UNIQUE,
     intake_secret_hash TEXT,
     vertical TEXT NOT NULL DEFAULT 'Real Estate',
     business_name TEXT,
@@ -202,10 +205,12 @@ CREATE TABLE IF NOT EXISTS campaigns (
     name TEXT NOT NULL,
     agent_id TEXT,
     list_id TEXT,
+    suppression_list_id TEXT,
     campaign_type TEXT NOT NULL DEFAULT 'bulk',
     status TEXT NOT NULL DEFAULT 'draft',
     concurrency INTEGER NOT NULL DEFAULT 5,
     calling_hours_json TEXT DEFAULT '{"start":"10:00","end":"18:00","timezone":"Asia/Kolkata"}',
+    calling_days_json TEXT DEFAULT '["Mon","Tue","Wed","Thu","Fri","Sat"]',
     retry_attempts INTEGER NOT NULL DEFAULT 2,
     retry_delay_minutes INTEGER NOT NULL DEFAULT 30,
     scheduled_at TEXT,
@@ -337,7 +342,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     description TEXT NOT NULL,
     invoice_id TEXT,
     running_balance_paise INTEGER NOT NULL,
-    idempotency_key TEXT,
+    idempotency_key TEXT UNIQUE,
     created_at TEXT NOT NULL,
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
@@ -555,6 +560,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     events_json TEXT NOT NULL DEFAULT '["call.completed"]',
     signing_secret TEXT NOT NULL,
     is_active INTEGER NOT NULL DEFAULT 1,
+    include_transcripts INTEGER NOT NULL DEFAULT 1,
     retry_limit INTEGER NOT NULL DEFAULT 3,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -724,22 +730,112 @@ CREATE TABLE IF NOT EXISTS disposition_mappings (
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 
-CREATE INDEX idx_leads_tenant_phone ON leads(tenant_id, phone);
-CREATE INDEX idx_leads_tenant_status ON leads(tenant_id, lead_status);
-CREATE INDEX idx_calls_tenant_date ON calls(tenant_id, created_at);
-CREATE INDEX idx_calls_tenant_agent ON calls(tenant_id, agent_id);
-CREATE INDEX idx_campaigns_tenant_status ON campaigns(tenant_id, status);
-CREATE INDEX idx_campaign_jobs_lookup ON campaign_jobs(campaign_id, status);
-CREATE INDEX idx_tx_tenant_date ON transactions(tenant_id, created_at);
-CREATE INDEX idx_agents_tenant ON agents(tenant_id);
-CREATE INDEX idx_agents_slug ON agents(slug);
-CREATE INDEX idx_orders_tenant ON payment_orders(tenant_id);
-CREATE INDEX idx_kb_chunks_agent ON knowledge_chunks(tenant_id, agent_id);
-CREATE INDEX idx_dnc_tenant_phone ON do_not_call_entries(tenant_id, phone);
-CREATE INDEX idx_consent_tenant_phone ON consent_records(tenant_id, phone);
-CREATE INDEX idx_audit_tenant_date ON audit_logs(tenant_id, created_at);
-CREATE INDEX idx_caller_memory_tenant_phone ON caller_memories(tenant_id, phone);
-CREATE INDEX idx_notifications_tenant ON notifications(tenant_id, is_read);
+CREATE TABLE IF NOT EXISTS appointments (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    lead_id TEXT,
+    call_id TEXT,
+    agent_id TEXT,
+    contact_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT,
+    title TEXT NOT NULL,
+    scheduled_start TEXT NOT NULL,
+    scheduled_end TEXT NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    external_calendar_id TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(tenant_id, scheduled_start, status),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    trigger_type TEXT NOT NULL DEFAULT 'call_completed',
+    is_active INTEGER NOT NULL DEFAULT 1,
+    graph_json TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workflow_executions (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    trigger_event TEXT NOT NULL,
+    temporal_workflow_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued',
+    context_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    error_message TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS support_tickets (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    created_by_user_id TEXT,
+    assigned_staff_id TEXT,
+    subject TEXT NOT NULL,
+    description TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'technical',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'open',
+    resolution_notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS promo_credits (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    amount_paise INTEGER NOT NULL,
+    remaining_paise INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    expires_at TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS provider_usage_costs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    call_id TEXT,
+    category TEXT NOT NULL,
+    provider_name TEXT NOT NULL,
+    units DOUBLE PRECISION NOT NULL DEFAULT 0,
+    estimated_cost_paise INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_leads_tenant_phone ON leads(tenant_id, phone);
+CREATE INDEX IF NOT EXISTS idx_leads_tenant_status ON leads(tenant_id, lead_status);
+CREATE INDEX IF NOT EXISTS idx_calls_tenant_date ON calls(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_calls_tenant_agent ON calls(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_campaigns_tenant_status ON campaigns(tenant_id, status);
+CREATE INDEX IF NOT EXISTS idx_campaign_jobs_lookup ON campaign_jobs(campaign_id, status);
+CREATE INDEX IF NOT EXISTS idx_tx_tenant_date ON transactions(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_agents_tenant ON agents(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_agents_slug ON agents(slug);
+CREATE INDEX IF NOT EXISTS idx_orders_tenant ON payment_orders(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_kb_chunks_agent ON knowledge_chunks(tenant_id, agent_id);
+CREATE INDEX IF NOT EXISTS idx_dnc_tenant_phone ON do_not_call_entries(tenant_id, phone);
+CREATE INDEX IF NOT EXISTS idx_consent_tenant_phone ON consent_records(tenant_id, phone);
+CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_logs(tenant_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_caller_memory_tenant_phone ON caller_memories(tenant_id, phone);
+CREATE INDEX IF NOT EXISTS idx_notifications_tenant ON notifications(tenant_id, is_read);
 
 -- Vector RAG Knowledge Chunks (PostgreSQL + pgvector)
 CREATE TABLE IF NOT EXISTS knowledge_chunks_pg (
@@ -757,3 +853,42 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks_pg (
 
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_pg_tenant_agent ON knowledge_chunks_pg(tenant_id, agent_id);
 CREATE INDEX IF NOT EXISTS idx_kb_chunks_pg_embedding ON knowledge_chunks_pg USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+-- Multi-Tenant Row-Level Security (RLS) Isolation Policies
+-- Enforces isolation whenever app.current_tenant_id is set on the DB session.
+ALTER TABLE agents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE leads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE campaigns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE calls ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transactions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE knowledge_chunks_pg ENABLE ROW LEVEL SECURITY;
+ALTER TABLE appointments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE workflows ENABLE ROW LEVEL SECURITY;
+ALTER TABLE support_tickets ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS tenant_isolation_agents ON agents;
+CREATE POLICY tenant_isolation_agents ON agents USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_leads ON leads;
+CREATE POLICY tenant_isolation_leads ON leads USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_campaigns ON campaigns;
+CREATE POLICY tenant_isolation_campaigns ON campaigns USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_calls ON calls;
+CREATE POLICY tenant_isolation_calls ON calls USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_transactions ON transactions;
+CREATE POLICY tenant_isolation_transactions ON transactions USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_kb_pg ON knowledge_chunks_pg;
+CREATE POLICY tenant_isolation_kb_pg ON knowledge_chunks_pg USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_appointments ON appointments;
+CREATE POLICY tenant_isolation_appointments ON appointments USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_workflows ON workflows;
+CREATE POLICY tenant_isolation_workflows ON workflows USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));
+
+DROP POLICY IF EXISTS tenant_isolation_support_tickets ON support_tickets;
+CREATE POLICY tenant_isolation_support_tickets ON support_tickets USING (NULLIF(current_setting('app.current_tenant_id', true), '') IS NULL OR tenant_id = current_setting('app.current_tenant_id', true));

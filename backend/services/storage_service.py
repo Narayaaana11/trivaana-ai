@@ -58,11 +58,20 @@ class StorageService:
         }
 
     @staticmethod
-    def read_local_file(storage_key: str) -> Optional[bytes]:
-        # Prevent directory traversal
+    def read_local_file(storage_key: str, tenant_id: Optional[str] = None) -> Optional[bytes]:
+        # Prevent path traversal, backslash tricks, and sibling prefix collisions
+        cleaned = (storage_key or "").strip()
+        if not cleaned or "\\" in cleaned or cleaned.startswith("/") or ".." in Path(cleaned).parts:
+            return None
         base = settings.LOCAL_STORAGE_PATH.resolve()
-        target = (base / storage_key).resolve()
-        if not str(target).startswith(str(base)) or not target.is_file():
+        if tenant_id:
+            tenant_base = (base / tenant_id).resolve()
+            target = (base / cleaned).resolve()
+            if not target.is_relative_to(tenant_base) or not target.is_file():
+                return None
+            return target.read_bytes()
+        target = (base / cleaned).resolve()
+        if not target.is_relative_to(base) or not target.is_file():
             return None
         return target.read_bytes()
 

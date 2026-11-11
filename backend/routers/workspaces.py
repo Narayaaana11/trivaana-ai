@@ -190,6 +190,10 @@ def update_member_role(
     member = cur.fetchone()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
+    if member["role"] == "owner" and current_user.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owner can modify owner role")
+    if role == "owner" and current_user.get("role") != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owner can grant owner role")
 
     now = datetime.now(timezone.utc).isoformat()
     cur.execute(
@@ -197,7 +201,10 @@ def update_member_role(
         (role, req.status, now, member_id, tenant["id"])
     )
     if member["user_id"]:
-        cur.execute("UPDATE users SET role = ? WHERE id = ? AND tenant_id = ?", (role, member["user_id"], tenant["id"]))
+        cur.execute(
+            "UPDATE users SET role = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ? AND tenant_id = ?",
+            (role, member["user_id"], tenant["id"]),
+        )
     db.commit()
     return {"status": "success", "member_id": member_id, "role": role}
 
@@ -217,6 +224,11 @@ def remove_member(
     if member["role"] == "owner":
         raise HTTPException(status_code=400, detail="Cannot remove workspace owner")
 
+    if member["user_id"]:
+        cur.execute(
+            "UPDATE users SET status = 'suspended', token_version = COALESCE(token_version, 1) + 1 WHERE id = ? AND tenant_id = ?",
+            (member["user_id"], tenant["id"]),
+        )
     cur.execute("DELETE FROM workspace_members WHERE id = ? AND tenant_id = ?", (member_id, tenant["id"]))
     db.commit()
     return {"status": "removed", "member_id": member_id}
@@ -361,9 +373,9 @@ def get_tenant_media_file(
     storage_key: str,
     tenant: dict = Depends(get_current_tenant),
 ):
-    if not storage_key.startswith(f"{tenant['id']}/"):
+    if ".." in storage_key or "\\" in storage_key or storage_key.startswith("/") or not storage_key.startswith(f"{tenant['id']}/"):
         raise HTTPException(status_code=403, detail="Access denied: media belongs to another tenant")
-    data = StorageService.read_local_file(storage_key)
+    data = StorageService.read_local_file(storage_key, tenant_id=tenant["id"])
     if data is None:
         raise HTTPException(status_code=404, detail="Media object not found")
     media_type = "audio/mpeg" if storage_key.lower().endswith(".mp3") else "application/octet-stream"

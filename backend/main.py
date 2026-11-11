@@ -5,9 +5,10 @@ LiveKit Real-Time Voice Engine, 4 Calling Modes, Knowledge Base RAG, AI Actions,
 Integrations, Compliance, Billing, and Super Admin.
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import time
 
 from core.config import settings
 from core.rate_limit import RateLimitMiddleware
@@ -32,6 +33,9 @@ from routers.phone_numbers import router as phone_numbers_router
 from routers.compliance import router as compliance_router
 from routers.billing import router as billing_router
 from routers.admin import router as admin_router
+from routers.appointments import router as appointments_router
+from routers.workflows import router as workflows_router
+from routers.support import router as support_router
 from routers.health import router as health_router
 
 
@@ -83,6 +87,30 @@ app.include_router(phone_numbers_router)
 app.include_router(compliance_router)
 app.include_router(billing_router)
 app.include_router(admin_router)
+app.include_router(appointments_router)
+app.include_router(workflows_router)
+app.include_router(support_router)
+
+
+try:
+    from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST  # type: ignore
+
+    HTTP_REQUESTS_TOTAL = Counter("trivaana_http_requests_total", "Total HTTP requests", ["method", "status"])
+    HTTP_REQUEST_DURATION = Histogram("trivaana_http_request_duration_seconds", "HTTP request latency", ["method"])
+
+    @app.middleware("http")
+    async def prometheus_metrics_middleware(request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        HTTP_REQUESTS_TOTAL.labels(method=request.method, status=str(response.status_code)).inc()
+        HTTP_REQUEST_DURATION.labels(method=request.method).observe(time.perf_counter() - start)
+        return response
+
+    @app.get("/metrics", include_in_schema=False)
+    def metrics_endpoint():
+        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+except ImportError:
+    pass
 
 if __name__ == "__main__":
     import uvicorn

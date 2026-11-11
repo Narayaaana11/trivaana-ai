@@ -12,8 +12,9 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, get_current_user
+from core.dependencies import get_current_tenant, get_current_user, require_roles
 from core.config import settings
+from core.vault import decrypt_config_json, encrypt_config_json, encrypt_secret
 from services.webhook_service import WebhookService, is_safe_public_url
 from services.audit_service import AuditService
 
@@ -104,7 +105,7 @@ def list_integrations(
         pk = meta["provider_key"]
         row = saved.get(pk)
         status = row["status"] if row else ("connected" if env_configured.get(pk) else "disconnected")
-        cfg = json.loads(row["config_json"] or "{}") if row else {}
+        cfg = decrypt_config_json(row["config_json"] or "{}") if row else {}
         items.append({
             **meta,
             "id": row["id"] if row else None,
@@ -123,7 +124,7 @@ def connect_integration(
     provider_key: str,
     req: ConnectIntegrationRequest,
     tenant: dict = Depends(get_current_tenant),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     meta = next((m for m in INTEGRATION_CATALOG if m["provider_key"] == provider_key), None)
@@ -131,6 +132,7 @@ def connect_integration(
         raise HTTPException(status_code=404, detail=f"Unknown integration '{provider_key}'")
 
     now = datetime.now(timezone.utc).isoformat()
+    encrypted_cfg = encrypt_config_json(req.config)
     cur = db.cursor()
     cur.execute("SELECT id FROM integrations WHERE tenant_id = ? AND provider_key = ?", (tenant["id"], provider_key))
     existing = cur.fetchone()
@@ -141,7 +143,7 @@ def connect_integration(
             UPDATE integrations SET status = 'connected', config_json = ?, permissions_json = ?, last_error = NULL, updated_at = ?
             WHERE id = ?
             """,
-            (json.dumps(req.config), json.dumps(req.permissions), now, int_id),
+            (encrypted_cfg, json.dumps(req.permissions), now, int_id),
         )
     else:
         int_id = f"int_{uuid.uuid4().hex[:8]}"
@@ -150,7 +152,7 @@ def connect_integration(
             INSERT INTO integrations (id, tenant_id, provider_key, display_name, category, status, config_json, permissions_json, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, 'connected', ?, ?, ?, ?)
             """,
-            (int_id, tenant["id"], provider_key, meta["display_name"], meta["category"], json.dumps(req.config), json.dumps(req.permissions), now, now),
+            (int_id, tenant["id"], provider_key, meta["display_name"], meta["category"], encrypted_cfg, json.dumps(req.permissions), now, now),
         )
 
     AuditService.log_event(
@@ -170,6 +172,7 @@ def connect_integration(
 def disconnect_integration(
     provider_key: str,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     cur = db.cursor()
@@ -192,7 +195,7 @@ def test_integration(
     cur = db.cursor()
     cur.execute("SELECT * FROM integrations WHERE tenant_id = ? AND provider_key = ?", (tenant["id"], provider_key))
     row = cur.fetchone()
-    cfg = json.loads(row["config_json"] or "{}") if row else {}
+    cfg = decrypt_config_json(row["config_json"] or "{}") if row else {}
 
     env_map = {
         "openai": settings.has_openai,
@@ -275,6 +278,7 @@ def list_webhooks(
 def create_webhook(
     req: CreateWebhookRequest,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     if not req.url.startswith(("http://", "https://")):
@@ -282,6 +286,7 @@ def create_webhook(
 
     wh_id = f"whk_{uuid.uuid4().hex[:8]}"
     secret = f"whsec_{secrets.token_hex(20)}"
+    encrypted_secret = encrypt_secret(secret)
     now = datetime.now(timezone.utc).isoformat()
     cur = db.cursor()
     cur.execute(
@@ -289,7 +294,7 @@ def create_webhook(
         INSERT INTO webhooks (id, tenant_id, name, url, events_json, signing_secret, is_active, include_transcripts, retry_limit, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)
         """,
-        (wh_id, tenant["id"], req.name.strip(), req.url.strip(), json.dumps(req.events), secret, 1 if req.include_transcripts else 0, req.retry_limit, now, now),
+        (wh_id, tenant["id"], req.name.strip(), req.url.strip(), json.dumps(req.events), encrypted_secret, 1 if req.include_transcripts else 0, req.retry_limit, now, now),
     )
     db.commit()
     return {"status": "created", "webhook_id": wh_id, "signing_secret": secret}
@@ -299,6 +304,7 @@ def create_webhook(
 def rotate_webhook_secret(
     webhook_id: str,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     new_secret = f"whsec_{secrets.token_hex(20)}"
@@ -306,7 +312,7 @@ def rotate_webhook_secret(
     cur = db.cursor()
     cur.execute(
         "UPDATE webhooks SET signing_secret = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
-        (new_secret, now, webhook_id, tenant["id"]),
+        (encrypt_secret(new_secret), now, webhook_id, tenant["id"]),
     )
     if cur.rowcount == 0:
         raise HTTPException(status_code=404, detail="Webhook not found")
@@ -318,6 +324,7 @@ def rotate_webhook_secret(
 def delete_webhook(
     webhook_id: str,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     cur = db.cursor()

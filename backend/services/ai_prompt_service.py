@@ -8,9 +8,9 @@ import json
 import sqlite3
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
-import requests
 
 from core.config import settings
+from providers.llm_adapter import LLMAdapter
 from services.knowledge_service import KnowledgeService
 
 
@@ -57,9 +57,9 @@ class AIPromptService:
     ) -> Dict[str, Any]:
         """
         Generate a structured AI Employee configuration from a natural-language description.
-        Uses OpenAI structured JSON output when OPENAI_API_KEY is configured.
+        Uses provider-independent LLMAdapter (Gemini primary + OpenAI fallback).
         """
-        if settings.has_openai:
+        if settings.has_gemini or settings.has_openai:
             try:
                 system_msg = (
                     "You are a Principal AI Voice Architect designing enterprise telecalling AI employees. "
@@ -84,39 +84,32 @@ class AIPromptService:
                     f"Extra Context: {json.dumps(extra_context or {})}"
                 )
 
-                resp = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.OPENAI_MODEL,
-                        "response_format": {"type": "json_object"},
-                        "temperature": 0.4,
-                        "messages": [
-                            {"role": "system", "content": system_msg},
-                            {"role": "user", "content": user_msg},
-                        ],
-                    },
-                    timeout=25.0,
+                llm_res = LLMAdapter.complete(
+                    messages=[
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    temperature=0.4,
+                    max_tokens=1400,
+                    json_mode=True,
+                    trace_name="trivaana.generate_agent_config",
                 )
-                if resp.status_code == 200:
-                    raw_content = resp.json()["choices"][0]["message"]["content"]
-                    parsed = json.loads(raw_content)
+                if llm_res:
+                    parsed = json.loads(llm_res["text"])
                     validated = GeneratedAgentConfig(**parsed)
                     return {
                         "status": "success",
-                        "generation_mode": "openai",
-                        "model": settings.OPENAI_MODEL,
-                        "openai_configured": True,
+                        "generation_mode": llm_res["provider"],
+                        "model": llm_res["model"],
+                        "openai_configured": settings.has_openai,
+                        "gemini_configured": settings.has_gemini,
                         "config": validated.model_dump(),
                     }
             except Exception as e:
                 fallback = AIPromptService._deterministic_template(
                     description, employee_name, business_name, industry, designation, language, call_direction, speaking_style
                 )
-                fallback["warning"] = f"OpenAI generation fallback triggered: {str(e)}"
+                fallback["warning"] = f"LLM generation fallback triggered: {str(e)}"
                 return fallback
 
         return AIPromptService._deterministic_template(
@@ -245,12 +238,26 @@ class AIPromptService:
         never_say = json.loads(agent.get("never_say_json") or "[]")
         never_do = json.loads(agent.get("never_do_json") or "[]")
 
-        # Check opt-out intent
+        # Check opt-out & transfer intent (English + Romanized Indian phrases)
         lower_msg = user_message.lower()
-        opt_out_detected = any(phrase in lower_msg for phrase in ("do not call", "don't call", "stop calling", "remove my number", "unsubscribe"))
-        transfer_detected = any(phrase in lower_msg for phrase in ("human", "manager", "real person", "representative", "agent please"))
+        opt_out_detected = any(
+            phrase in lower_msg
+            for phrase in (
+                "do not call",
+                "don't call",
+                "stop calling",
+                "remove my number",
+                "unsubscribe",
+                "call cheyyakandi",
+                "call mat karo",
+            )
+        )
+        transfer_detected = any(
+            phrase in lower_msg
+            for phrase in ("human", "manager", "real person", "representative", "agent please")
+        )
 
-        if settings.has_openai:
+        if settings.has_gemini or settings.has_openai:
             try:
                 system_prompt = (
                     f"{agent['system_prompt']}\n\n"
@@ -269,26 +276,17 @@ class AIPromptService:
                     messages.append({"role": role, "content": turn.get("text", "")})
                 messages.append({"role": "user", "content": user_message})
 
-                resp = requests.post(
-                    "https://api.openai.com/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": settings.OPENAI_MODEL,
-                        "messages": messages,
-                        "temperature": 0.4,
-                        "max_tokens": 220,
-                    },
-                    timeout=15.0,
+                llm_res = LLMAdapter.complete(
+                    messages=messages,
+                    temperature=0.4,
+                    max_tokens=220,
+                    trace_name="trivaana.voice_turn",
                 )
-                if resp.status_code == 200:
-                    reply = resp.json()["choices"][0]["message"]["content"].strip()
+                if llm_res:
                     return {
-                        "reply": reply,
-                        "mode": "openai",
-                        "model": settings.OPENAI_MODEL,
+                        "reply": llm_res["text"],
+                        "mode": llm_res["provider"],
+                        "model": llm_res["model"],
                         "kb_chunks_used": kb_hits,
                         "available_actions": actions,
                         "opt_out_detected": opt_out_detected,

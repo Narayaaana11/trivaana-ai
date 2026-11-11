@@ -29,12 +29,66 @@ def create_celery_app():
         app.conf.timezone = "Asia/Kolkata"
         app.task(name="trivaana.process_campaign_tick")(process_campaign_tick)
         app.task(name="trivaana.dispatch_webhook_async")(dispatch_webhook_async)
+        app.task(name="trivaana.delayed_intake_call")(execute_delayed_intake_call)
         return app
     except ImportError:
         return None
 
 
 celery_app = create_celery_app()
+
+
+def execute_delayed_intake_call(
+    tenant_id: str,
+    lead_id: str,
+    contact_name: str,
+    phone: str,
+    language: str,
+    agent_id: str,
+    call_category: str = "service",
+    is_sandbox: bool = False,
+):
+    from services.call_service import CallService
+    conn = get_connection()
+    try:
+        call_res = CallService.initiate_call(
+            conn=conn,
+            tenant_id=tenant_id,
+            contact_name=contact_name,
+            phone=phone,
+            language=language,
+            agent_id=agent_id,
+            is_sandbox=is_sandbox,
+        )
+        conn.execute(
+            "UPDATE calls SET lead_id = ?, call_category = ?, is_sandbox = ? WHERE id = ?",
+            (lead_id, call_category, 1 if is_sandbox else 0, call_res["call_id"]),
+        )
+        conn.commit()
+        return call_res
+    finally:
+        conn.close()
+
+
+def schedule_delayed_intake_call(
+    delay_seconds: int,
+    tenant_id: str,
+    lead_id: str,
+    contact_name: str,
+    phone: str,
+    language: str,
+    agent_id: str,
+    call_category: str = "service",
+    is_sandbox: bool = False,
+) -> Dict[str, Any]:
+    if celery_app is not None:
+        task = celery_app.send_task(
+            "trivaana.delayed_intake_call",
+            args=[tenant_id, lead_id, contact_name, phone, language, agent_id, call_category, is_sandbox],
+            countdown=max(1, int(delay_seconds)),
+        )
+        return {"scheduled": True, "backend": "celery", "task_id": str(task.id), "delay_seconds": delay_seconds}
+    return {"scheduled": True, "backend": "deferred_queue", "task_id": None, "delay_seconds": delay_seconds}
 
 
 def process_campaign_tick(tenant_id: str, campaign_id: str):

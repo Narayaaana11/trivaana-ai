@@ -207,6 +207,12 @@ class CampaignService:
         dispatched_count = 0
         actual_lines = min(effective_concurrency, len(enqueued_jobs))
         agent_id = campaign["agent_id"]
+        agent_language = "te-IN"
+        if agent_id:
+            cur.execute("SELECT language FROM agents WHERE id = ? AND tenant_id = ?", (agent_id, tenant_id))
+            ag_row = cur.fetchone()
+            if ag_row and ag_row["language"]:
+                agent_language = ag_row["language"]
 
         for i in range(actual_lines):
             job_id, lead = enqueued_jobs[i]
@@ -216,7 +222,7 @@ class CampaignService:
                     tenant_id=tenant_id,
                     contact_name=lead["name"],
                     phone=lead["phone"],
-                    language="te-IN",
+                    language=agent_language,
                     agent_id=agent_id,
                     campaign_id=campaign_id,
                     is_sandbox=use_sandbox,

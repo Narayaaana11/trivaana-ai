@@ -30,6 +30,15 @@ class RealtimeVoicePipeline:
             return "kn-IN"
         if any("\u0D00" <= ch <= "\u0D7F" for ch in text):
             return "ml-IN"
+        tokens = set((text or "").lower().split())
+        if tokens & {"naku", "cheppandi", "kavali", "meeru", "entha", "ekkada", "andhuke", "raadhu"}:
+            return "te-IN"
+        if tokens & {"mujhe", "chahiye", "namaste", "kya", "kitna", "aap", "bataiye", "nahi"}:
+            return "hi-IN"
+        if tokens & {"vanakkam", "venum", "sollunga", "epdi", "enna"}:
+            return "ta-IN"
+        if tokens & {"please", "stop", "remove", "connect", "manager", "human", "hello", "pricing", "price"}:
+            return "en-IN"
         return default_lang
 
     @staticmethod
@@ -113,7 +122,38 @@ class RealtimeVoicePipeline:
         tts_ms = int((time.perf_counter() - t_tts) * 1000)
         total_ms = int((time.perf_counter() - t0) * 1000)
 
-        # 6. Persist turn transcripts if linked to a call
+        # 6. Persist turn transcripts, automatic opt-out DNC, & mid-call transfer action
+        if turn_res.get("opt_out_detected") and caller_phone:
+            try:
+                from services.compliance_service import ComplianceService
+                ComplianceService.add_dnc(
+                    conn,
+                    tenant_id,
+                    caller_phone,
+                    reason="Caller requested opt-out during live voice turn",
+                    source="voice_turn_auto",
+                )
+            except Exception:
+                pass
+
+        action_events: List[Dict[str, Any]] = []
+        if call_id and turn_res.get("transfer_requested") and agent.get("transfer_number"):
+            try:
+                from services.action_service import ActionService
+                act_res = ActionService.execute_action(
+                    conn=conn,
+                    tenant_id=tenant_id,
+                    call_id=call_id,
+                    action_type="call_transfer",
+                    action_name="Auto Warm Transfer",
+                    arguments={"transfer_number": agent["transfer_number"]},
+                    agent_id=agent.get("id"),
+                    is_sandbox=not bool(settings.has_exotel or settings.has_twilio or settings.has_plivo),
+                )
+                action_events.append(act_res)
+            except Exception:
+                pass
+
         if call_id:
             cur = conn.cursor()
             now = datetime.now(timezone.utc).isoformat()
@@ -146,6 +186,7 @@ class RealtimeVoicePipeline:
             "kb_chunks_used": turn_res["kb_chunks_used"],
             "opt_out_detected": turn_res["opt_out_detected"],
             "transfer_requested": turn_res["transfer_requested"],
+            "action_events": action_events,
             "latency": {
                 "stt_ms": stt_ms,
                 "llm_ms": llm_ms,

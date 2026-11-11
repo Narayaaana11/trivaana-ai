@@ -32,9 +32,12 @@ CREATE TABLE IF NOT EXISTS users (
     email TEXT UNIQUE NOT NULL,
     hashed_password TEXT NOT NULL,
     role TEXT NOT NULL DEFAULT 'owner',
+    staff_role TEXT,
     full_name TEXT NOT NULL,
     email_verified INTEGER NOT NULL DEFAULT 1,
     is_super_admin INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    token_version INTEGER NOT NULL DEFAULT 1,
     avatar_url TEXT,
     last_login_at TEXT,
     created_at TEXT NOT NULL,
@@ -756,6 +759,101 @@ CREATE TABLE IF NOT EXISTS disposition_mappings (
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 
+-- Appointments & Slot Reservations
+CREATE TABLE IF NOT EXISTS appointments (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    lead_id TEXT,
+    call_id TEXT,
+    agent_id TEXT,
+    contact_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    email TEXT,
+    title TEXT NOT NULL,
+    scheduled_start TEXT NOT NULL,
+    scheduled_end TEXT NOT NULL,
+    timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+    status TEXT NOT NULL DEFAULT 'scheduled', -- 'scheduled', 'completed', 'cancelled', 'rescheduled'
+    external_calendar_id TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    UNIQUE(tenant_id, scheduled_start, status),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+-- Visual Workflows & Durable Execution Records
+CREATE TABLE IF NOT EXISTS workflows (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    trigger_type TEXT NOT NULL DEFAULT 'call_completed', -- 'call_completed', 'lead_created', 'appointment_booked', 'manual'
+    is_active INTEGER NOT NULL DEFAULT 1,
+    graph_json TEXT NOT NULL DEFAULT '{"nodes":[],"edges":[]}',
+    created_by TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS workflow_executions (
+    id TEXT PRIMARY KEY,
+    workflow_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    trigger_event TEXT NOT NULL,
+    temporal_workflow_id TEXT,
+    status TEXT NOT NULL DEFAULT 'queued', -- 'queued', 'running', 'completed', 'failed'
+    context_json TEXT NOT NULL DEFAULT '{}',
+    result_json TEXT NOT NULL DEFAULT '{}',
+    error_message TEXT,
+    started_at TEXT NOT NULL,
+    completed_at TEXT,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE,
+    FOREIGN KEY (workflow_id) REFERENCES workflows(id) ON DELETE CASCADE
+);
+
+-- Internal Support Tickets (Customer <-> Staff Portal)
+CREATE TABLE IF NOT EXISTS support_tickets (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    created_by_user_id TEXT,
+    assigned_staff_id TEXT,
+    subject TEXT NOT NULL,
+    description TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'technical', -- 'technical', 'billing', 'compliance', 'telephony', 'onboarding'
+    priority TEXT NOT NULL DEFAULT 'medium', -- 'low', 'medium', 'high', 'urgent'
+    status TEXT NOT NULL DEFAULT 'open', -- 'open', 'in_progress', 'waiting_customer', 'resolved', 'closed'
+    resolution_notes TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+-- Promotional Credits (Separated from Purchased Wallet Credits & Tax Invoices)
+CREATE TABLE IF NOT EXISTS promo_credits (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    amount_paise INTEGER NOT NULL,
+    remaining_paise INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    expires_at TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
+-- Provider COGS & Gross Margin Tracking
+CREATE TABLE IF NOT EXISTS provider_usage_costs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    call_id TEXT,
+    category TEXT NOT NULL, -- 'telephony', 'stt', 'llm', 'tts'
+    provider_name TEXT NOT NULL,
+    units REAL NOT NULL DEFAULT 0,
+    estimated_cost_paise INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
 -- Performance & Tenant Scoping Indexes
 CREATE INDEX IF NOT EXISTS idx_leads_tenant_phone ON leads(tenant_id, phone);
 CREATE INDEX IF NOT EXISTS idx_leads_tenant_status ON leads(tenant_id, lead_status);
@@ -911,6 +1009,12 @@ def migrate_existing_database(conn: sqlite3.Connection):
 
     _safe_add_columns(cur, "contact_lists", {
         "list_type": "TEXT NOT NULL DEFAULT 'reusable'",
+    })
+
+    _safe_add_columns(cur, "users", {
+        "staff_role": "TEXT",
+        "status": "TEXT NOT NULL DEFAULT 'active'",
+        "token_version": "INTEGER NOT NULL DEFAULT 1",
     })
 
     _safe_add_columns(cur, "webhooks", {

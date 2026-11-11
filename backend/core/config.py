@@ -70,6 +70,13 @@ class Settings(BaseModel):
     # Demo & Testing Flags
     ALLOW_DEMO_SEEDING: bool = Field(default_factory=lambda: os.environ.get("ALLOW_DEMO_SEEDING", "false").lower() in ("true", "1"))
     ALLOW_SANDBOX_TOPUP: bool = Field(default_factory=lambda: os.environ.get("ALLOW_SANDBOX_TOPUP", "false").lower() in ("true", "1"))
+    ALLOW_WELCOME_CREDIT: bool = Field(
+        default_factory=lambda: (
+            os.environ.get("ALLOW_WELCOME_CREDIT", "").lower() in ("true", "1")
+            if os.environ.get("ENVIRONMENT", "development").lower() in ("production", "prod")
+            else os.environ.get("ALLOW_WELCOME_CREDIT", "true").lower() in ("true", "1")
+        )
+    )
 
     # Database & Cache
     DATABASE_URL: str = Field(default_factory=lambda: os.environ.get("DATABASE_URL", ""))
@@ -84,10 +91,15 @@ class Settings(BaseModel):
     STORAGE_BUCKET: str = Field(default_factory=lambda: os.environ.get("STORAGE_BUCKET", "trivaana-media"))
     LOCAL_STORAGE_PATH: Path = Field(default_factory=lambda: Path(os.environ.get("LOCAL_STORAGE_PATH", str(STORAGE_DIR))))
 
-    # Security & Auth
+    # Security, Auth & Encryption
     JWT_SECRET: str = Field(default_factory=lambda: os.environ.get("JWT_SECRET", "trivaana-dev-secret-key-change-in-production-981a27e"))
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440  # 24 hours
+    ENCRYPTION_MASTER_KEY: str = Field(default_factory=lambda: os.environ.get("ENCRYPTION_MASTER_KEY", ""))
+    TRUSTED_PROXY_CIDRS: str = Field(default_factory=lambda: os.environ.get("TRUSTED_PROXY_CIDRS", "127.0.0.1/32,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"))
+    OIDC_ISSUER: str = Field(default_factory=lambda: os.environ.get("OIDC_ISSUER", ""))
+    OIDC_AUDIENCE: str = Field(default_factory=lambda: os.environ.get("OIDC_AUDIENCE", ""))
+    OIDC_JWKS_URL: str = Field(default_factory=lambda: os.environ.get("OIDC_JWKS_URL", ""))
 
     # CORS
     ALLOWED_ORIGINS: List[str] = Field(default_factory=lambda: [
@@ -101,10 +113,22 @@ class Settings(BaseModel):
     def CORS_ORIGINS(self) -> List[str]:
         return self.ALLOWED_ORIGINS
 
-    # OpenAI & LLM Reasoning
+    # AI & LLM Reasoning (Provider-independent: Gemini primary + OpenAI fallback)
+    GEMINI_API_KEY: str = Field(default_factory=lambda: os.environ.get("GEMINI_API_KEY", ""))
+    GEMINI_MODEL: str = Field(default_factory=lambda: os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"))
+    GEMINI_EMBEDDING_MODEL: str = Field(default_factory=lambda: os.environ.get("GEMINI_EMBEDDING_MODEL", "text-embedding-004"))
     OPENAI_API_KEY: str = Field(default_factory=lambda: os.environ.get("OPENAI_API_KEY", ""))
     OPENAI_MODEL: str = Field(default_factory=lambda: os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
     OPENAI_EMBEDDING_MODEL: str = Field(default_factory=lambda: os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"))
+    DEEPGRAM_API_KEY: str = Field(default_factory=lambda: os.environ.get("DEEPGRAM_API_KEY", ""))
+
+    # Workflow & Observability
+    TEMPORAL_ADDRESS: str = Field(default_factory=lambda: os.environ.get("TEMPORAL_ADDRESS", ""))
+    TEMPORAL_NAMESPACE: str = Field(default_factory=lambda: os.environ.get("TEMPORAL_NAMESPACE", "default"))
+    SENTRY_DSN: str = Field(default_factory=lambda: os.environ.get("SENTRY_DSN", ""))
+    LANGFUSE_PUBLIC_KEY: str = Field(default_factory=lambda: os.environ.get("LANGFUSE_PUBLIC_KEY", ""))
+    LANGFUSE_SECRET_KEY: str = Field(default_factory=lambda: os.environ.get("LANGFUSE_SECRET_KEY", ""))
+    LANGFUSE_HOST: str = Field(default_factory=lambda: os.environ.get("LANGFUSE_HOST", "https://cloud.langfuse.com"))
 
     # LiveKit Real-Time Voice Framework
     LIVEKIT_URL: str = Field(default_factory=lambda: os.environ.get("LIVEKIT_URL", ""))
@@ -173,8 +197,28 @@ class Settings(BaseModel):
     BILLING_INCREMENT_SECONDS: int = 30       # Round up to nearest 30 seconds for connected calls
 
     @property
+    def has_gemini(self) -> bool:
+        return bool(self.GEMINI_API_KEY)
+
+    @property
     def has_openai(self) -> bool:
         return bool(self.OPENAI_API_KEY)
+
+    @property
+    def has_deepgram(self) -> bool:
+        return bool(self.DEEPGRAM_API_KEY)
+
+    @property
+    def has_oidc(self) -> bool:
+        return bool(self.OIDC_ISSUER and self.OIDC_JWKS_URL)
+
+    @property
+    def has_temporal(self) -> bool:
+        return bool(self.TEMPORAL_ADDRESS)
+
+    @property
+    def has_langfuse(self) -> bool:
+        return bool(self.LANGFUSE_PUBLIC_KEY and self.LANGFUSE_SECRET_KEY)
 
     @property
     def has_livekit(self) -> bool:

@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles
 from core.config import settings
 
 router = APIRouter(prefix="/api", tags=["Phone Numbers & Channels"])
@@ -88,6 +88,7 @@ def list_phone_numbers(
 def request_or_connect_phone_number(
     req: ProvisionNumberRequest,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     provider = req.provider.lower()
@@ -161,12 +162,16 @@ def update_phone_number(
     number_id: str,
     req: UpdateNumberRequest,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     cur = db.cursor()
     cur.execute("SELECT * FROM phone_numbers WHERE id = ? AND tenant_id = ?", (number_id, tenant["id"]))
     if not cur.fetchone():
         raise HTTPException(status_code=404, detail="Phone number not found")
+
+    if req.kyc_status is not None and not current_user.get("is_super_admin"):
+        raise HTTPException(status_code=403, detail="Only platform compliance or Super Admin can modify KYC status")
 
     fields = []
     params: list = []
@@ -204,6 +209,7 @@ def update_phone_number(
 def add_calling_channels(
     req: CreateChannelPoolRequest,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
     now = datetime.now(timezone.utc).isoformat()

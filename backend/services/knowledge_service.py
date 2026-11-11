@@ -15,7 +15,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-import requests
+import httpx
 
 from core.config import settings
 
@@ -75,10 +75,25 @@ def _local_deterministic_embedding(text: str, dims: int = 128) -> List[float]:
 
 
 def generate_embedding(text: str) -> Dict[str, Any]:
-    """Generate vector embedding via OpenAI if configured, else deterministic local vector."""
+    """Generate vector embedding via Gemini or OpenAI if configured, else deterministic local vector."""
+    if settings.has_gemini:
+        try:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{settings.GEMINI_EMBEDDING_MODEL}:embedContent"
+            resp = httpx.post(
+                url,
+                params={"key": settings.GEMINI_API_KEY},
+                json={"model": f"models/{settings.GEMINI_EMBEDDING_MODEL}", "content": {"parts": [{"text": text[:8000]}]}},
+                timeout=10.0,
+            )
+            if resp.status_code == 200:
+                emb = resp.json().get("embedding", {}).get("values", [])
+                if emb:
+                    return {"vector": emb, "provider": "gemini"}
+        except Exception:
+            pass
     if settings.has_openai:
         try:
-            resp = requests.post(
+            resp = httpx.post(
                 "https://api.openai.com/v1/embeddings",
                 headers={
                     "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
@@ -94,6 +109,15 @@ def generate_embedding(text: str) -> Dict[str, Any]:
         except Exception:
             pass
     return {"vector": _local_deterministic_embedding(text), "provider": "local_hash_vector"}
+
+
+def _to_pgvector_1536(vec: List[float]) -> List[float]:
+    """Normalize arbitrary embedding dimensions into 1536-dim vector for knowledge_chunks_pg."""
+    if len(vec) == 1536:
+        return vec
+    if len(vec) > 1536:
+        return vec[:1536]
+    return vec + [0.0] * (1536 - len(vec))
 
 
 def cosine_similarity(a: List[float], b: List[float]) -> float:
@@ -117,6 +141,12 @@ def extract_text_from_bytes(filename: str, content: bytes) -> str:
         return clean_text(" ".join(texts))
 
     if lower.endswith(".pdf"):
+        try:
+            import fitz  # type: ignore  # PyMuPDF
+            doc = fitz.open(stream=content, filetype="pdf")
+            return clean_text("\n".join(page.get_text("text") or "" for page in doc))
+        except Exception:
+            pass
         try:
             import pypdf  # type: ignore
             reader = pypdf.PdfReader(io.BytesIO(content))
@@ -143,10 +173,10 @@ def extract_text_from_url(url: str) -> str:
     for _ in range(4):
         if not is_safe_public_url(current_url):
             raise ValueError("URL blocked by SSRF security policy: must be a public HTTP/HTTPS host")
-        resp = requests.get(
+        resp = httpx.get(
             current_url,
             timeout=10.0,
-            allow_redirects=False,
+            follow_redirects=False,
             headers={"User-Agent": "TrivaanaAI-KB-Crawler/1.0"},
         )
         if resp.is_redirect or resp.is_permanent_redirect:
@@ -204,10 +234,13 @@ class KnowledgeService:
             (doc_id, source_id, tenant_id, agent_id, title, source_type, source_url, cleaned, doc_status, error_msg, len(chunks), now, now),
         )
 
+        is_pg = getattr(conn, "engine_name", "sqlite3") == "postgresql"
         emb_provider = "local_hash_vector"
         for idx, chunk_text in enumerate(chunks):
             emb = generate_embedding(chunk_text)
             emb_provider = emb["provider"]
+            chunk_id = f"kbc_{uuid.uuid4().hex[:10]}"
+            meta_str = json.dumps({"title": title, "source_type": source_type, "embedding_provider": emb_provider})
             cur.execute(
                 """
                 INSERT INTO knowledge_chunks (
@@ -215,7 +248,7 @@ class KnowledgeService:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    f"kbc_{uuid.uuid4().hex[:10]}",
+                    chunk_id,
                     doc_id,
                     source_id,
                     tenant_id,
@@ -223,10 +256,20 @@ class KnowledgeService:
                     idx,
                     chunk_text,
                     json.dumps(emb["vector"]),
-                    json.dumps({"title": title, "source_type": source_type, "embedding_provider": emb_provider}),
+                    meta_str,
                     now,
                 ),
             )
+            if is_pg:
+                pg_vec = "[" + ",".join(str(v) for v in _to_pgvector_1536(emb["vector"])) + "]"
+                cur.execute(
+                    """
+                    INSERT INTO knowledge_chunks_pg (
+                        id, document_id, source_id, tenant_id, agent_id, chunk_index, content, embedding, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?::vector, ?::jsonb)
+                    """,
+                    (chunk_id, doc_id, source_id, tenant_id, agent_id, idx, chunk_text, pg_vec, meta_str),
+                )
 
         cur.execute(
             """
@@ -253,6 +296,18 @@ class KnowledgeService:
         }
 
     @staticmethod
+    def rerank_chunks(query: str, chunks: List[Dict[str, Any]], top_k: int = 4) -> List[Dict[str, Any]]:
+        """Hybrid lexical + semantic reranking (BGE-compatible interface)."""
+        q_terms = {t for t in re.findall(r"[a-zA-Z0-9\u0900-\u0DFF]+", query.lower()) if len(t) > 2}
+        for item in chunks:
+            content_lower = (item.get("content") or "").lower()
+            lexical_hits = sum(1 for t in q_terms if t in content_lower)
+            lexical_boost = (lexical_hits / max(1, len(q_terms))) * 0.35
+            item["score"] = round(float(item.get("score") or 0.0) + lexical_boost, 4)
+        chunks.sort(key=lambda x: x["score"], reverse=True)
+        return chunks[:top_k]
+
+    @staticmethod
     def search(
         conn: sqlite3.Connection,
         tenant_id: str,
@@ -260,6 +315,11 @@ class KnowledgeService:
         agent_id: Optional[str] = None,
         top_k: int = 4,
     ) -> List[Dict[str, Any]]:
+        if getattr(conn, "engine_name", "sqlite3") == "postgresql":
+            pg_hits = KnowledgeService.search_pgvector(conn, tenant_id, query, agent_id=agent_id, top_k=top_k * 2)
+            if pg_hits:
+                return KnowledgeService.rerank_chunks(query, pg_hits, top_k=top_k)
+
         cur = conn.cursor()
         sql = """
         SELECT c.id, c.document_id, c.source_id, c.agent_id, c.chunk_index, c.content, c.embedding_json, c.metadata_json, d.title
@@ -317,7 +377,7 @@ class KnowledgeService:
         if getattr(conn, "engine_name", "sqlite3") != "postgresql":
             return KnowledgeService.search(conn, tenant_id, query, agent_id=agent_id, top_k=top_k)
 
-        emb = generate_embedding(query)["vector"]
+        emb = _to_pgvector_1536(generate_embedding(query)["vector"])
         vec_literal = "[" + ",".join(str(v) for v in emb) + "]"
         cur = conn.cursor()
         sql = """

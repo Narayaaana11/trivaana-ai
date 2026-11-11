@@ -113,12 +113,17 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
     setBusy(true);
     setFeedback(null);
     try {
+      const [startHour, endHour] = callingHours.split('-').map((s) => s.trim());
+      const callingHoursPayload =
+        startHour && endHour
+          ? { start: startHour, end: endHour, timezone: 'Asia/Kolkata' }
+          : { start: '10:00', end: '18:00', timezone: 'Asia/Kolkata' };
       const created = await trivaanaApi.createCampaign({
         name: newName || `Campaign ${new Date().toLocaleDateString()}`,
         agent_id: newAgentId || undefined,
         list_id: selectedListId || undefined,
         suppression_list_id: suppressionListId || undefined,
-        calling_hours: callingHours,
+        calling_hours: callingHoursPayload,
         calling_days: callingDays,
         concurrency,
         retry_attempts: retryAttempts,
