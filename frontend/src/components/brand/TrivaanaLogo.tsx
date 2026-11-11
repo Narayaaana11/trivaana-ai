@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import BRAND from '@/lib/brand';
 
 export interface TrivaanaLogoProps {
@@ -15,121 +15,137 @@ export const TrivaanaLogo: React.FC<TrivaanaLogoProps> = ({
   size = 36,
   className = '',
   showText = true,
-  showTagline = false,
-  textColor = '#0F172A',
+  showTagline: _showTagline = false,
+  textColor = '#0f0f14',
   subtitle = "India's Most Natural Voice AI",
   animated = false,
 }) => {
+  const uid = useId().replace(/:/g, '');
   const numericSize =
     typeof size === 'number'
       ? size
       : size === 'sm'
-      ? 28
+      ? 30
       : size === 'lg'
       ? 48
       : 36;
 
+  const badgeGradId = `trvBg-${uid}`;
+  const glossGradId = `trvGloss-${uid}`;
+
   return (
-    <div className={`inline-flex items-center gap-3 ${className} group select-none`}>
-      {/* Redesigned Modern Vector Brandmark Container */}
+    <div className={`inline-flex items-center gap-2.5 ${className} group select-none`}>
+      {/* Precision Acoustic 'T' Voice Emblem */}
       <div
         style={{ width: numericSize, height: numericSize }}
-        className="relative rounded-xl bg-gradient-to-br from-orange-500 via-orange-600 to-amber-500 p-[1.5px] shadow-md shadow-orange-500/25 flex items-center justify-center shrink-0 transition-all duration-300 group-hover:scale-105 group-hover:shadow-orange-500/40"
+        className="relative shrink-0 transition-transform duration-300 group-hover:scale-105"
       >
-        <div className="w-full h-full rounded-[10px] bg-white flex items-center justify-center p-1.5 overflow-hidden relative">
-          {/* Subtle Ambient Radial Highlight inside badge */}
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_30%,rgba(255,85,0,0.12),transparent_70%)]" />
+        <svg
+          viewBox="0 0 64 64"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          className="w-full h-full drop-shadow-[0_4px_10px_rgba(255,85,0,0.28)]"
+          aria-hidden="true"
+        >
+          <defs>
+            <linearGradient id={badgeGradId} x1="6" y1="4" x2="58" y2="60" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#FF3B00" />
+              <stop offset="52%" stopColor="#FF5500" />
+              <stop offset="100%" stopColor="#FF9500" />
+            </linearGradient>
+            <linearGradient id={glossGradId} x1="32" y1="2" x2="32" y2="34" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.32" />
+              <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0" />
+            </linearGradient>
+          </defs>
 
-          {/* Precision SVG Vector Mark: Dynamic 'T' + Acoustic Voice Frequencies */}
-          <svg
-            viewBox="0 0 48 48"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            className="w-full h-full relative z-10"
-          >
-            <defs>
-              <linearGradient id="trivaanaGrad" x1="4" y1="6" x2="44" y2="42" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#FF3B30" />
-                <stop offset="50%" stopColor="#FF5500" />
-                <stop offset="100%" stopColor="#FFAA00" />
-              </linearGradient>
-              <linearGradient id="trivaanaStemGrad" x1="24" y1="14" x2="24" y2="42" gradientUnits="userSpaceOnUse">
-                <stop offset="0%" stopColor="#FF5500" />
-                <stop offset="100%" stopColor="#EA580C" />
-              </linearGradient>
-            </defs>
+          {/* Outer Squircle Emblem */}
+          <rect x="2" y="2" width="60" height="60" rx="16" fill={`url(#${badgeGradId})`} />
+          <rect
+            x="3"
+            y="3"
+            width="58"
+            height="58"
+            rx="15"
+            stroke="#FFFFFF"
+            strokeOpacity="0.24"
+            strokeWidth="1.5"
+          />
+          <rect x="4" y="4" width="56" height="28" rx="14" fill={`url(#${glossGradId})`} />
 
-            {/* Top Soundwave Crossbar forming the 'T' top */}
-            <path
-              d="M 6 12 C 12 12 16 8 24 8 C 32 8 36 12 42 12 C 44 12 45 14 43.5 15.5 C 41 18 36 17 24 17 C 12 17 7 18 4.5 15.5 C 3 14 4 12 6 12 Z"
-              fill="url(#trivaanaGrad)"
-            />
+          {/* Arched Acoustic 'T' Crossbar */}
+          <path
+            d="M15 21.5C22.5 16.8 41.5 16.8 49 21.5"
+            stroke="#FFFFFF"
+            strokeWidth="6.2"
+            strokeLinecap="round"
+          />
 
-            {/* Left Flanking Frequency Wave Bar */}
-            <rect
-              x="10"
-              y="20"
-              width="3.5"
-              height="10"
-              rx="1.75"
-              fill="url(#trivaanaGrad)"
-              opacity="0.85"
-              className={animated ? "animate-pulse" : ""}
-            />
+          {/* Central Resonance Pillar */}
+          <rect x="28.75" y="23" width="6.5" height="26" rx="3.25" fill="#FFFFFF" />
 
-            {/* Central Vertical Audio Stem forming the 'T' pillar */}
-            <path
-              d="M 21.5 18 C 21.5 17 26.5 17 26.5 18 L 26.5 35 C 26.5 38 24 41 24 41 C 24 41 21.5 38 21.5 35 Z"
-              fill="url(#trivaanaStemGrad)"
-            />
+          {/* Inner Left & Right Frequency Bars */}
+          <rect
+            x="20.5"
+            y="28.5"
+            width="4.5"
+            height="14.5"
+            rx="2.25"
+            fill="#FFFFFF"
+            fillOpacity="0.92"
+            className={animated ? 'animate-pulse' : ''}
+          />
+          <rect
+            x="39"
+            y="28.5"
+            width="4.5"
+            height="14.5"
+            rx="2.25"
+            fill="#FFFFFF"
+            fillOpacity="0.92"
+            className={animated ? 'animate-pulse' : ''}
+          />
 
-            {/* Center Core Neural AI Node */}
-            <circle cx="24" cy="24" r="3" fill="#FFFFFF" />
-            <circle cx="24" cy="24" r="1.75" fill="#FF5500" />
-
-            {/* Right Flanking Frequency Wave Bar */}
-            <rect
-              x="34.5"
-              y="20"
-              width="3.5"
-              height="10"
-              rx="1.75"
-              fill="url(#trivaanaGrad)"
-              opacity="0.85"
-              className={animated ? "animate-pulse" : ""}
-            />
-
-            {/* Outer Vernacular Resonance Arcs */}
-            <path
-              d="M 4 23 C 4 21 6 20 6 25 C 6 30 4 29 4 27 Z"
-              fill="url(#trivaanaGrad)"
-              opacity="0.5"
-            />
-            <path
-              d="M 44 23 C 44 21 42 20 42 25 C 42 30 44 29 44 27 Z"
-              fill="url(#trivaanaGrad)"
-              opacity="0.5"
-            />
-          </svg>
-        </div>
+          {/* Outer Harmonic Harmonies */}
+          <rect
+            x="13"
+            y="32.5"
+            width="4"
+            height="7.5"
+            rx="2"
+            fill="#FFFFFF"
+            fillOpacity="0.72"
+            className={animated ? 'animate-pulse' : ''}
+          />
+          <rect
+            x="47"
+            y="32.5"
+            width="4"
+            height="7.5"
+            rx="2"
+            fill="#FFFFFF"
+            fillOpacity="0.72"
+            className={animated ? 'animate-pulse' : ''}
+          />
+        </svg>
       </div>
 
-      {/* Brand Typography */}
+      {/* Wordmark */}
       {showText && (
-        <div className="flex flex-col text-left">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-col text-left leading-none">
+          <div className="flex items-center gap-1.5">
             <span
-              className="font-extrabold tracking-tight text-base sm:text-lg leading-tight transition-colors group-hover:text-orange-600"
+              className="font-display font-extrabold tracking-[-0.03em] text-base sm:text-[18px] transition-colors group-hover:text-[#ff5500]"
               style={{ color: textColor }}
             >
               {BRAND.shortName}
             </span>
-            <span className="bg-gradient-to-r from-orange-500 to-amber-500 text-white font-black text-[10px] px-1.5 py-0.5 rounded shadow-2xs tracking-wider uppercase">
+            <span className="bg-gradient-to-tr from-[#ff4d00] to-[#ff8c00] text-white font-display font-extrabold text-[9.5px] px-1.5 py-0.5 rounded-md shadow-2xs tracking-[0.08em] uppercase">
               AI
             </span>
           </div>
           {subtitle && (
-            <span className="text-[10px] text-slate-500 font-medium tracking-tight">
+            <span className="text-[10px] text-[#6e6e7e] font-medium tracking-tight mt-0.5">
               {subtitle}
             </span>
           )}

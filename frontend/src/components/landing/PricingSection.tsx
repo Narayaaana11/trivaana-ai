@@ -1,14 +1,10 @@
-import React, { useState } from 'react';
-import { SpotlightCard } from '@/components/reactbits';
+import React from 'react';
+import { SpotlightCard, GlareHover, WarmTooltip } from '@/components/reactbits';
 import {
   Check,
-  Zap,
   ShieldCheck,
-  FileText,
   CreditCard,
   ArrowRight,
-  Sparkles,
-  HelpCircle,
 } from 'lucide-react';
 
 interface PricingSectionProps {
@@ -53,7 +49,7 @@ const TIERS = [
       'Autonomous OSM Lead Scout (Vizag, Hyd, Blr)',
       'Automated WhatsApp Post-Call Dispatcher',
       'Speed-to-Lead Webhook (<30s trigger)',
-      '5 Outpero Industry Dialect Presets',
+      '5 Trivaana Industry Dialect Presets',
       'Emergency Concurrency Kill Switch',
       'Priority WhatsApp Support',
     ],
@@ -96,29 +92,55 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
             <CreditCard className="w-3.5 h-3.5 text-orange-600" />
             <span>Zero Hidden Fees • 100% Transparent INR Pricing</span>
           </div>
-          <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-950 tracking-tight">
-            Predictable Pricing Engineered for <br />
-            <span className="bg-gradient-to-r from-orange-600 to-amber-600 bg-clip-text text-transparent">
-              Indian Business ROI
+          <h2 className="font-display text-3xl sm:text-4xl md:text-5xl font-extrabold text-[#0f0f14] tracking-tight">
+            Pay for talk time. <br />
+            <span className="bg-gradient-to-r from-[#ff5500] to-[#d97706] bg-clip-text text-transparent">
+              Nothing else.
             </span>
           </h2>
-          <p className="mt-4 text-base sm:text-lg text-slate-600">
-            Pre-fund your calling wallet via Razorpay UPI or Netbanking. Balance is deducted in whole integer paise for actual connected seconds only (₹6.50/min standard, ₹8.50/min premium, 30s increments). SAC Code: 998313.
+          <p className="mt-4 text-base sm:text-lg text-[#525260]">
+            Standard Indian voices at ₹5.00/min or Premium neural voices at ₹6.80/min. Unanswered calls cost ₹0, and workspace seats are unlimited.
           </p>
+        </div>
+
+        {/* Outpero-Style Standard vs Premium Talk-Time Transparency Strip */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-w-4xl mx-auto mb-12">
+          <div className="p-5 rounded-2xl bg-white border border-[#e4e4e9] flex items-center justify-between shadow-2xs">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-[#6e6e7e]">Standard Voices</div>
+              <div className="font-display text-lg font-extrabold text-[#0f0f14] mt-0.5">Sarvam &amp; Native Regional Engines</div>
+              <div className="text-xs text-[#525260]">Low-latency Telugu, Hindi, Tamil, Kannada &amp; more</div>
+            </div>
+            <div className="text-right shrink-0 pl-4">
+              <div className="font-display text-2xl font-extrabold text-[#0f0f14] tabular-nums">₹5.00<span className="text-xs font-medium text-[#6e6e7e]">/min</span></div>
+              <div className="text-[10px] text-emerald-700 font-bold">₹0 unanswered</div>
+            </div>
+          </div>
+          <div className="p-5 rounded-2xl bg-white border border-[#fed7aa] flex items-center justify-between shadow-2xs">
+            <div>
+              <div className="text-[11px] font-bold uppercase tracking-wider text-[#ff5500]">Premium Neural Voices</div>
+              <div className="font-display text-lg font-extrabold text-[#0f0f14] mt-0.5">ElevenLabs Flash v2.5 &amp; Studio</div>
+              <div className="text-xs text-[#525260]">Ultra-expressive empathy &amp; custom cloned brand voices</div>
+            </div>
+            <div className="text-right shrink-0 pl-4">
+              <div className="font-display text-2xl font-extrabold text-[#ff5500] tabular-nums">₹6.80<span className="text-xs font-medium text-[#6e6e7e]">/min</span></div>
+              <div className="text-[10px] text-emerald-700 font-bold">Billed per 30s pulse</div>
+            </div>
+          </div>
         </div>
 
         {/* 3 Tier Pricing Cards */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch max-w-7xl mx-auto">
           {TIERS.map((tier) => (
-            <SpotlightCard
-              key={tier.id}
-              spotlightColor={tier.highlight ? 'rgba(255, 85, 0, 0.16)' : 'rgba(0, 0, 0, 0.04)'}
-              className={`rounded-3xl p-8 flex flex-col justify-between transition-all relative ${
-                tier.highlight
-                  ? 'bg-white border-2 border-orange-500 shadow-xl lg:-translate-y-2'
-                  : 'bg-white border border-slate-200/90 shadow-sm'
-              }`}
-            >
+            <GlareHover key={tier.id} className="rounded-3xl h-full">
+              <SpotlightCard
+                spotlightColor={tier.highlight ? 'rgba(255, 85, 0, 0.16)' : 'rgba(0, 0, 0, 0.04)'}
+                className={`h-full rounded-3xl p-8 flex flex-col justify-between transition-all relative ${
+                  tier.highlight
+                    ? 'bg-white border-2 border-orange-500 shadow-xl'
+                    : 'bg-white border border-slate-200/90 shadow-sm'
+                }`}
+              >
               <div>
                 {tier.highlight && (
                   <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
@@ -179,15 +201,18 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                 </button>
               </div>
             </SpotlightCard>
+          </GlareHover>
           ))}
         </div>
 
         {/* GST & Wallet Trust Banner */}
         <div className="mt-12 max-w-4xl mx-auto rounded-2xl p-6 bg-white border border-slate-200/90 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-6">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200/80 flex items-center justify-center shrink-0">
-              <ShieldCheck className="w-6 h-6 text-orange-600" />
-            </div>
+            <WarmTooltip tip="SAC Code 998313 · Full ITC GST Compliance">
+              <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-200/80 flex items-center justify-center shrink-0">
+                <ShieldCheck className="w-6 h-6 text-orange-600" />
+              </div>
+            </WarmTooltip>
             <div>
               <h4 className="text-sm font-bold text-slate-900">
                 TRAI Certified & 18% GST Tax Invoices

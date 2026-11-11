@@ -1,8 +1,10 @@
 """
 TRIVAANA AI: Telephony Call Lifecycle Manager
-Coordinates dispatch, provider callbacks, duration calculation, and call usage debits.
+Coordinates dispatch, provider callbacks, duration calculation, call usage debits,
+and webhook notifications.
 """
 
+import json
 import sqlite3
 import uuid
 import re
@@ -12,6 +14,7 @@ from core.config import settings
 from providers import get_telephony_provider
 from providers.base import CallStatusEvent
 from services.billing_service import BillingService, InsufficientBalanceError
+
 
 def normalize_phone(phone: str) -> str:
     """Normalize phone number to E.164-compatible format (+91XXXXXXXXXX)."""
@@ -24,6 +27,7 @@ def normalize_phone(phone: str) -> str:
         return f"+{cleaned}"
     return cleaned
 
+
 class CallService:
     @staticmethod
     def initiate_call(
@@ -35,18 +39,16 @@ class CallService:
         agent_id: Optional[str] = None,
         campaign_id: Optional[str] = None,
         provider_name: Optional[str] = None,
-        is_sandbox: bool = False
+        is_sandbox: bool = False,
+        lead_id: Optional[str] = None,
+        call_category: str = "service",
     ) -> Dict[str, Any]:
-        """
-        Initiate an outbound call for a tenant.
-        Checks wallet balance, normalizes phone, and dispatches to telephony provider.
-        """
         cur = conn.cursor()
         norm_phone = normalize_phone(phone)
         if len(norm_phone) < 10:
             raise ValueError(f"Invalid recipient phone number: '{phone}'")
 
-        # 1. Check wallet balance (minimum 1 minute required)
+        # 1. Check wallet balance (minimum 1 minute required for non-sandbox)
         cur.execute("SELECT wallet_balance_paise FROM tenants WHERE id = ?", (tenant_id,))
         tenant = cur.fetchone()
         if not tenant:
@@ -59,36 +61,49 @@ class CallService:
             )
 
         # 2. Select provider
-        # If is_sandbox is true or neither Exotel nor Twilio is configured, use mock
-        actual_provider_name = "mock" if is_sandbox else (provider_name or ("exotel" if settings.has_exotel else ("twilio" if settings.has_twilio else "mock")))
+        actual_provider_name = "mock" if is_sandbox else (
+            provider_name or (
+                "exotel" if settings.has_exotel
+                else "plivo" if settings.has_plivo
+                else "vobiz" if settings.has_vobiz
+                else "twilio" if settings.has_twilio
+                else "mock"
+            )
+        )
         provider = get_telephony_provider(actual_provider_name)
 
         call_id = f"call_{uuid.uuid4().hex[:8]}"
         now = datetime.now(timezone.utc).isoformat()
 
         # 3. Dispatch to provider
+        base_url = settings.PUBLIC_BASE_URL.rstrip('/')
         dispatch_result = provider.initiate_call(
             to_phone=norm_phone,
             from_phone=None,
-            webhook_url=f"https://api.trivaana.ai/api/calls/callback/{call_id}",
-            extra_data={"tenant_id": tenant_id, "agent_id": agent_id}
+            webhook_url=f"{base_url}/api/calls/callback/{call_id}",
+            extra_data={"tenant_id": tenant_id, "agent_id": agent_id, "call_id": call_id}
         )
 
         initial_status = dispatch_result.status if dispatch_result.success else "failed"
         provider_call_id = dispatch_result.provider_call_id or f"unassigned_{call_id}"
+        sandbox_flag = 1 if (is_sandbox or actual_provider_name == "mock") else 0
 
         # 4. Insert call record
         cur.execute("""
         INSERT INTO calls (
-            id, tenant_id, campaign_id, agent_id, contact_name, phone,
-            direction, provider, provider_call_id, duration_seconds,
+            id, tenant_id, campaign_id, agent_id, lead_id, contact_name, phone,
+            direction, call_category, provider, provider_call_id, duration_seconds,
             billable_duration_seconds, cost_paise, status, language, outcome,
-            transcript, recording_url, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'outbound', ?, ?, 0, 0, 0, ?, ?, 'Initiated', NULL, NULL, ?)
+            transcript, recording_url, is_sandbox, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'outbound', ?, ?, ?, 0, 0, 0, ?, ?, 'Initiated', NULL, NULL, ?, ?)
         """, (
-            call_id, tenant_id, campaign_id, agent_id, contact_name, norm_phone,
-            actual_provider_name, provider_call_id, initial_status, language, now
+            call_id, tenant_id, campaign_id, agent_id, lead_id, contact_name, norm_phone,
+            call_category, actual_provider_name, provider_call_id, initial_status, language, sandbox_flag, now
         ))
+        cur.execute(
+            "INSERT INTO call_events (id, call_id, tenant_id, event_type, payload_json, created_at) VALUES (?, ?, ?, 'call.initiated', ?, ?)",
+            (f"cev_{uuid.uuid4().hex[:8]}", call_id, tenant_id, json.dumps({"provider": actual_provider_name, "status": initial_status}), now),
+        )
         conn.commit()
 
         return {
@@ -96,7 +111,7 @@ class CallService:
             "provider": actual_provider_name,
             "provider_call_id": provider_call_id,
             "status": initial_status,
-            "is_sandbox": actual_provider_name == "mock",
+            "is_sandbox": bool(sandbox_flag),
             "contact_name": contact_name,
             "phone": norm_phone,
             "created_at": now,
@@ -105,10 +120,6 @@ class CallService:
 
     @staticmethod
     def process_call_event(conn: sqlite3.Connection, event: CallStatusEvent) -> Dict[str, Any]:
-        """
-        Process signed webhook event from telephony carrier.
-        Updates duration, records transcript/audio URL, and settles usage debits atomically.
-        """
         cur = conn.cursor()
         cur.execute("SELECT * FROM calls WHERE provider_call_id = ? OR id = ?", (event.provider_call_id, event.provider_call_id))
         call = cur.fetchone()
@@ -119,7 +130,6 @@ class CallService:
         tenant_id = call["tenant_id"]
         now = datetime.now(timezone.utc).isoformat()
 
-        # Settle billing if call has completed
         cost_paise = 0
         billable_seconds = 0
         is_completed = event.status in ("completed", "answered")
@@ -135,7 +145,6 @@ class CallService:
             billable_seconds = cost_info["billable_seconds"]
             cost_paise = cost_info["cost_paise"]
 
-            # Debit wallet if billable cost > 0
             if cost_paise > 0 and call["cost_paise"] == 0:
                 idempotency_key = f"call_debit_{call_id}"
                 desc = f"Call usage: {call['contact_name']} ({call['phone']}) - {duration}s"
@@ -148,7 +157,6 @@ class CallService:
                     invoice_id=f"INV-CALL-{call_id[-6:].upper()}"
                 )
 
-        # Update call record
         cur.execute("""
         UPDATE calls
         SET status = ?,
@@ -167,7 +175,50 @@ class CallService:
             now,
             call_id
         ))
+        cur.execute(
+            "INSERT INTO call_events (id, call_id, tenant_id, event_type, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (f"cev_{uuid.uuid4().hex[:8]}", call_id, tenant_id, f"call.{event.status}", json.dumps({"duration": event.duration_seconds}), now),
+        )
+        if event.recording_url:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO call_recordings (id, call_id, tenant_id, url, duration_seconds, is_simulated, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (f"rec_{uuid.uuid4().hex[:8]}", call_id, tenant_id, event.recording_url, event.duration_seconds, 1 if call["is_sandbox"] else 0, now),
+            )
         conn.commit()
+
+        if event.status in ("completed", "failed", "busy", "no-answer", "cancelled"):
+            try:
+                from services.disposition_service import DispositionService
+                from services.webhook_service import WebhookService
+                mapped_disp = DispositionService.resolve_disposition(conn, tenant_id, call["outcome"] or event.status)
+                WebhookService.dispatch_event(
+                    conn=conn,
+                    tenant_id=tenant_id,
+                    event_type=f"call.{event.status}",
+                    payload={
+                        "call_id": call_id,
+                        "status": event.status,
+                        "mapped_disposition": mapped_disp,
+                        "duration_seconds": event.duration_seconds,
+                        "cost_paise": cost_paise,
+                        "phone": call["phone"],
+                        "contact_name": call["contact_name"],
+                    },
+                    idempotency_key=f"wh_call_{call_id}_{event.status}",
+                )
+            except Exception:
+                pass
+
+        if call["campaign_id"] and event.status in ("completed", "failed", "busy", "no-answer", "cancelled"):
+            try:
+                from services.campaign_service import CampaignService
+                CampaignService.handle_call_outcome_for_job(conn, tenant_id, call["campaign_id"], call_id, event.status)
+                CampaignService.advance_campaign_queue(conn, tenant_id, call["campaign_id"])
+            except Exception:
+                pass
 
         return {
             "status": "updated",

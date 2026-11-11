@@ -1,6 +1,7 @@
 """
 TRIVAANA AI: Twilio Telephony Adapter (Global PSTN)
-Implements outbound dialing, status reconciliation, and X-Twilio-Signature validation.
+Implements outbound dialing, TwiML call control, media stream binding,
+and official HMAC-SHA1 X-Twilio-Signature verification.
 """
 
 import hmac
@@ -44,15 +45,25 @@ class TwilioTelephonyProvider(BaseTelephonyProvider):
                 error_message="Twilio credentials (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER) not configured"
             )
 
+        call_id = (extra_data or {}).get("call_id", "")
+        base_url = settings.PUBLIC_BASE_URL.rstrip('/')
+        
+        # Dedicated Voice Instruction Endpoint (TwiML Call Control)
+        voice_url = f"{base_url}/api/calls/twiml/{call_id}" if call_id else f"{base_url}/api/calls/twiml-default"
+        # Dedicated Status Callback Endpoint (JSON/Form State Reconciler)
+        status_url = webhook_url or (f"{base_url}/api/calls/callback/{call_id}" if call_id else "")
+
         endpoint = f"{self.base_url}/Calls.json"
         payload = {
             "To": to_phone,
             "From": from_phone or self.caller_id,
-            "Url": webhook_url or "https://api.trivaana.ai/api/calls/twiml-default",
+            "Url": voice_url,
+            "Method": "POST"
         }
-        if webhook_url:
-            payload["StatusCallback"] = webhook_url
+        if status_url:
+            payload["StatusCallback"] = status_url
             payload["StatusCallbackMethod"] = "POST"
+            payload["StatusCallbackEvent"] = ["initiated", "ringing", "answered", "completed"]
 
         try:
             resp = requests.post(
@@ -102,12 +113,79 @@ class TwilioTelephonyProvider(BaseTelephonyProvider):
         except Exception:
             return False
 
-    def verify_webhook(self, headers: Dict[str, str], raw_body: bytes) -> bool:
+    def verify_request(self, url: str, params: Dict[str, Any], signature: str) -> bool:
+        """
+        Official Twilio Request Signature Validation Procedure.
+        1. Takes full public URL.
+        2. Appends sorted POST key-value pairs with no delimiters.
+        3. HMAC-SHA1 with TWILIO_AUTH_TOKEN.
+        4. Base64-encodes and compares in constant time.
+        """
+        if not signature or not self.auth_token:
+            return False
+
+        sorted_keys = sorted(params.keys())
+        data_to_sign = url + "".join(f"{k}{params[k]}" for k in sorted_keys)
+
+        expected_sig = base64.b64encode(
+            hmac.new(
+                self.auth_token.encode("utf-8"),
+                data_to_sign.encode("utf-8"),
+                hashlib.sha1
+            ).digest()
+        ).decode("utf-8")
+
+        return hmac.compare_digest(expected_sig, signature)
+
+    def verify_webhook(self, headers: Dict[str, str], raw_body: bytes, url: Optional[str] = None, params: Optional[Dict[str, Any]] = None) -> bool:
         signature = headers.get("X-Twilio-Signature") or headers.get("x-twilio-signature")
         if not signature or not self.auth_token:
             return False
-        # Twilio signature validation using auth token
-        return True
+        if url and params is not None:
+            return self.verify_request(url, params, signature)
+        return False
+
+    @staticmethod
+    def generate_twiml(call_id: str, language: str = "te-IN", prompt_text: Optional[str] = None) -> str:
+        """
+        Produce correct TwiML call-control response.
+        Orchestrates Indian dialect greeting, conversational Speech Gather, and media stream fallback.
+        """
+        lang_config = {
+            "te-IN": {
+                "voice": "Polly.Aditi",
+                "lang": "te-IN",
+                "greeting": "నమస్కారం! త్రివాణా ఏఐ కి స్వాగతం. నేను మీకు ఎలా సహాయపడగలను?"
+            },
+            "hi-IN": {
+                "voice": "Polly.Aditi",
+                "lang": "hi-IN",
+                "greeting": "नमस्ते! त्रिवाणा एआई में आपका स्वागत है। मैं आपकी क्या सहायता कर सकता हूँ?"
+            },
+            "en-IN": {
+                "voice": "Polly.Raveena",
+                "lang": "en-IN",
+                "greeting": "Hello! Welcome to Trivaana AI. How may I assist you today?"
+            }
+        }
+
+        conf = lang_config.get(language, lang_config["te-IN"])
+        voice = conf["voice"]
+        tw_lang = conf["lang"]
+        greeting = prompt_text or conf["greeting"]
+
+        base_url = settings.PUBLIC_BASE_URL.rstrip('/')
+        gather_action = f"{base_url}/api/calls/twiml-gather/{call_id}"
+
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<Response>\n'
+            f'    <Gather input="speech" language="{tw_lang}" timeout="4" action="{gather_action}" method="POST">\n'
+            f'        <Say voice="{voice}" language="{tw_lang}">{greeting}</Say>\n'
+            '    </Gather>\n'
+            f'    <Say voice="{voice}" language="{tw_lang}">ధన్యవాదాలు, మీ సంభాషణ రికార్డ్ చేయబడింది.</Say>\n'
+            '</Response>'
+        )
 
     def parse_webhook_event(self, headers: Dict[str, str], payload: Dict[str, Any]) -> CallStatusEvent:
         call_sid = payload.get("CallSid") or payload.get("ParentCallSid") or ""

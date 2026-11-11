@@ -13,7 +13,7 @@ export const CountUp: React.FC<CountUpProps> = ({
   to,
   from = 0,
   duration = 1.2,
-  separator = ',',
+  separator: _separator = ',',
   className = '',
   decimals = 0,
 }) => {

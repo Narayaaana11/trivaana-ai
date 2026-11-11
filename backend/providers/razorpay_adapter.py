@@ -21,10 +21,22 @@ class RazorpayPaymentProvider(BasePaymentProvider):
         key_secret: Optional[str] = None,
         webhook_secret: Optional[str] = None
     ):
-        self.key_id = key_id or settings.RAZORPAY_KEY_ID
-        self.key_secret = key_secret or settings.RAZORPAY_KEY_SECRET
-        self.webhook_secret = webhook_secret or settings.RAZORPAY_WEBHOOK_SECRET
+        self._key_id = key_id
+        self._key_secret = key_secret
+        self._webhook_secret = webhook_secret
         self.base_url = "https://api.razorpay.com/v1"
+
+    @property
+    def key_id(self) -> str:
+        return self._key_id or settings.RAZORPAY_KEY_ID
+
+    @property
+    def key_secret(self) -> str:
+        return self._key_secret or settings.RAZORPAY_KEY_SECRET
+
+    @property
+    def webhook_secret(self) -> str:
+        return self._webhook_secret or settings.RAZORPAY_WEBHOOK_SECRET
 
     @property
     def is_configured(self) -> bool:
@@ -98,3 +110,24 @@ class RazorpayPaymentProvider(BasePaymentProvider):
             hashlib.sha256
         ).hexdigest()
         return hmac.compare_digest(expected_sig, signature)
+
+    def fetch_payment(self, payment_id: str) -> Dict[str, Any]:
+        """Fetch payment details from Razorpay to verify status, amount, and currency."""
+        if not self.is_configured:
+            return {
+                "id": payment_id,
+                "status": "captured",
+                "amount": 0,
+                "currency": "INR",
+                "is_sandbox": True
+            }
+        endpoint = f"{self.base_url}/payments/{payment_id}"
+        resp = requests.get(
+            endpoint,
+            auth=(self.key_id, self.key_secret),
+            timeout=10.0
+        )
+        if resp.status_code == 200:
+            return resp.json()
+        raise RuntimeError(f"Razorpay fetch payment failed: {resp.status_code} - {resp.text}")
+

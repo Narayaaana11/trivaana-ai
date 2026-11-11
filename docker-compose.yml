@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: trivaana
+      POSTGRES_USER: trivaana
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trivaana_dev_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./backend/database/postgres_pgvector_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trivaana"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env.example
+    environment:
+      PORT: "8001"
+      DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m worker.tasks
+    env_file:
+      - .env.example
+    environment:
+      DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - backend
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+  speech:
+    profiles: ["speech"]
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -m uvicorn voice_engine.speech_microservice:app --host 0.0.0.0 --port 8002
+    environment:
+      WHISPER_MODEL_SIZE: ${WHISPER_MODEL_SIZE:-small}
+      WHISPER_DEVICE: ${WHISPER_DEVICE:-cpu}
+      INDIC_CONFORMER_MODEL_DIR: ${INDIC_CONFORMER_MODEL_DIR:-}
+      INDICF5_MODEL_DIR: ${INDICF5_MODEL_DIR:-}
+    ports:
+      - "8002:8002"
+
+volumes:
+  pgdata:
+

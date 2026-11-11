@@ -1,36 +1,215 @@
 @import "tailwindcss";
 
 :root {
+  /* Trivaana Primary Accent (#FF5500 Preserved) */
   --primary: #ff5500;
   --primary-hover: #ea580c;
   --primary-dark: #c2410c;
   --primary-light: #fff7ed;
   --primary-border: #fed7aa;
-  
-  --bg-canvas: #f8fafc;
+
+  /* Outpero-Matched Light Canvas & Hairline Surfaces */
+  --canvas: #f6f6f8;
+  --bg-canvas: #f6f6f8;
+  --surface-public: #fcfcfd;
   --bg-card: #ffffff;
   --bg-card-hover: #f1f5f9;
-  
-  --border-subtle: #e2e8f0;
-  --border-strong: #cbd5e1;
+  --sidebar-bg: #f6f6f8;
+  --sidebar-accent: #ebebf0;
+
+  --border-subtle: #e4e4e9;
+  --border-strong: #d4d4dc;
   --border-active: #ff5500;
-  
-  --text-primary: #0f172a;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
-  
+
+  --text-primary: #0f0f14;
+  --text-secondary: #525260;
+  --text-muted: #8a8a98;
+
+  /* Dark Hero Prompt Builder Palette */
+  --hero-card-start: #121019;
+  --hero-card-end: #1b1824;
+
   --emerald: #16a34a;
   --cobalt: #2563eb;
   --amber: #d97706;
 }
 
+html[data-theme="dark"] {
+  --canvas: #0c0d12;
+  --bg-canvas: #0c0d12;
+  --surface-public: #0f1016;
+  --bg-card: #151722;
+  --bg-card-hover: #1e2130;
+  --sidebar-bg: #11121a;
+  --sidebar-accent: #222536;
+
+  --border-subtle: #252838;
+  --border-strong: #32364c;
+
+  --text-primary: #f4f4f7;
+  --text-secondary: #a1a1b2;
+  --text-muted: #717184;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Nirmala UI', 'Noto Sans', sans-serif;
   background-color: var(--bg-canvas);
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+.font-display {
+  font-family: 'Outfit', 'Geist', sans-serif;
+}
+
+.font-mono-code {
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Subtle Public Grid Pattern Matching Outpero Landing Sections */
+.bg-outpero-grid {
+  background-color: #fcfcfd;
+  background-image:
+    linear-gradient(to right, rgba(228, 228, 233, 0.52) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(228, 228, 233, 0.52) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+/* Outpero Dark Gradient Builder Card */
+.bg-outpero-dark-card {
+  background: radial-gradient(120% 100% at 50% 0%, rgba(255, 85, 0, 0.14) 0%, rgba(18, 16, 25, 0) 55%),
+    linear-gradient(180deg, #121019 0%, #1b1824 100%);
+}
+
+/* ReactBits Motion Keyframes */
+@keyframes rb-gradient-pan {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes rb-marquee-scroll {
+  from {
+    transform: translateX(0%);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes rb-star-orbit {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes rb-voice-wave {
+  0%, 100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.animate-rb-gradient {
+  background-size: 250% 250%;
+  animation: rb-gradient-pan 6s ease infinite;
+}
+
+.animate-rb-marquee {
+  animation: rb-marquee-scroll 28s linear infinite;
+}
+
+.animate-rb-marquee:hover {
+  animation-play-state: paused;
+}
+
+.animate-rb-star-orbit {
+  animation: rb-star-orbit 5s linear infinite;
+}
+
+/* Clean Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(138, 138, 152, 0.35);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(138, 138, 152, 0.55);
+}
+
+/* Dark Theme Surface Adaptation inside Workspace Inset Shell */
+html[data-theme="dark"] .trivaana-workspace-shell {
+  background-color: #0c0d12;
+  color: #f4f4f7;
+}
+
+html[data-theme="dark"] .trivaana-workspace-card {
+  background-color: #13151f;
+  border-color: #252838;
+}
+
+html[data-theme="dark"] .trivaana-workspace-main {
+  background-color: #0f1119;
+}
+
+html[data-theme="dark"] .trivaana-workspace-card .bg-white {
+  background-color: #181a27 !important;
+  color: #f4f4f7 !important;
+}
+
+html[data-theme="dark"] .trivaana-workspace-card .bg-slate-50,
+html[data-theme="dark"] .trivaana-workspace-card .bg-slate-100,
+html[data-theme="dark"] .trivaana-workspace-card .bg-\[\#f6f6f8\],
+html[data-theme="dark"] .trivaana-workspace-card .bg-\[\#f6f6f8\]\/70,
+html[data-theme="dark"] .trivaana-workspace-card .bg-\[\#fff7ed\] {
+  background-color: #1f2232 !important;
+  color: #f4f4f7 !important;
+}
+
+html[data-theme="dark"] .trivaana-workspace-card .border-slate-200,
+html[data-theme="dark"] .trivaana-workspace-card .border-slate-200\/90,
+html[data-theme="dark"] .trivaana-workspace-card .border-slate-100,
+html[data-theme="dark"] .trivaana-workspace-card .border-\[\#e4e4e9\],
+html[data-theme="dark"] .trivaana-workspace-card .border-\[\#fed7aa\] {
+  border-color: #2a2e42 !important;
+}
+
+html[data-theme="dark"] .trivaana-workspace-card .text-slate-900,
+html[data-theme="dark"] .trivaana-workspace-card .text-slate-800,
+html[data-theme="dark"] .trivaana-workspace-card .text-\[\#0f0f14\] {
+  color: #f4f4f7 !important;
+}
+
+html[data-theme="dark"] .trivaana-workspace-card .text-slate-700,
+html[data-theme="dark"] .trivaana-workspace-card .text-slate-600,
+html[data-theme="dark"] .trivaana-workspace-card .text-slate-500,
+html[data-theme="dark"] .trivaana-workspace-card .text-\[\#525260\],
+html[data-theme="dark"] .trivaana-workspace-card .text-\[\#6e6e7e\],
+html[data-theme="dark"] .trivaana-workspace-card .text-\[\#c2410c\] {
+  color: #b4b5c7 !important;
 }
 
 /* Accessibility: Global High-Contrast Focus Indicator */

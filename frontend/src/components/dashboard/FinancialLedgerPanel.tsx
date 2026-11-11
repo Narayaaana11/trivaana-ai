@@ -1,69 +1,92 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Transaction, Tenant } from '@/types/trivaana';
+import { AuroraBackground, GlareHover, ClickSpark, WarmTooltip } from '@/components/reactbits';
 import confetti from 'canvas-confetti';
 import {
   Wallet,
   CreditCard,
-  Plus,
   ArrowDownLeft,
   ArrowUpRight,
   ShieldCheck,
-  FileText,
   Download,
-  Sparkles,
-  CheckCircle2,
   RefreshCw,
+  FileText,
+  CheckCircle2,
+  AlertCircle,
 } from 'lucide-react';
 
 interface FinancialLedgerPanelProps {
   tenant: Tenant | null;
   onBalanceUpdated?: () => void;
+  initialSubTab?: 'ledger' | 'invoices' | 'billing_details';
 }
 
 export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
   tenant,
   onBalanceUpdated,
+  initialSubTab = 'ledger',
 }) => {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [invoices, setInvoices] = useState<any[]>([]);
+  const [workspaceBilling, setWorkspaceBilling] = useState<{ name: string; gstin: string; billing_email: string }>({
+    name: tenant?.name || '',
+    gstin: '',
+    billing_email: '',
+  });
   const [loading, setLoading] = useState(true);
   const [topUpAmount, setTopUpAmount] = useState<number>(1000);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [selectedInvoice, setSelectedInvoice] = useState<Transaction | null>(null);
+  const [activeSubTab, setActiveSubTab] = useState<'ledger' | 'invoices' | 'billing_details'>(initialSubTab);
+  const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
+  const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  const fetchTransactions = async () => {
+  const tenantName = tenant?.name || '';
+  const fetchBillingData = useCallback(async () => {
     try {
       setLoading(true);
-      const res = await trivaanaApi.getTransactions();
-      setTransactions(res.transactions);
-    } catch (err) {
-      console.error(err);
+      const [txRes, invRes, wsRes] = await Promise.all([
+        trivaanaApi.getTransactions(),
+        trivaanaApi.getInvoices().catch(() => ({ invoices: [] })),
+        trivaanaApi.getWorkspace().catch(() => null),
+      ]);
+      setTransactions(txRes.transactions || []);
+      setInvoices(invRes.invoices || []);
+      if (wsRes) {
+        setWorkspaceBilling({
+          name: wsRes.name || tenantName,
+          gstin: wsRes.gstin || '',
+          billing_email: wsRes.billing_email || '',
+        });
+      }
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Failed to load billing records' });
     } finally {
       setLoading(false);
     }
-  };
+  }, [tenantName]);
 
   useEffect(() => {
-    fetchTransactions();
-  }, []);
+    const id = setTimeout(() => {
+      void fetchBillingData();
+    }, 0);
+    return () => clearTimeout(id);
+  }, [fetchBillingData]);
 
   const handleQuickRecharge = async (amount: number) => {
     setIsProcessing(true);
+    setFeedback(null);
     try {
-      // 1. Create Razorpay order on server
       const order = await trivaanaApi.createRazorpayOrder(amount);
 
       if (order.is_sandbox || !window.Razorpay) {
-        // Transparent Sandbox Mode with atomic server-verified ledger credit
         await trivaanaApi.sandboxTopup(amount);
-        confetti({
-          particleCount: 80,
-          spread: 60,
-          origin: { y: 0.6 },
+        confetti({ particleCount: 70, spread: 55, origin: { y: 0.6 } });
+        setFeedback({
+          type: 'success',
+          message: `₹${amount.toLocaleString('en-IN')} credited via Developer Sandbox Ledger (Razorpay live keys not configured).`,
         });
-        alert(`₹${amount.toLocaleString('en-IN')} added to wallet successfully (Server Sandbox Ledger Credit)!`);
       } else {
-        // Live Razorpay Checkout
         const rzp = new window.Razorpay({
           key: order.key_id,
           amount: order.amount,
@@ -78,13 +101,12 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
               signature: response.razorpay_signature,
               amount_inr: amount,
             });
-            confetti({
-              particleCount: 90,
-              spread: 70,
-              origin: { y: 0.6 },
+            confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
+            setFeedback({
+              type: 'success',
+              message: `Payment of ₹${amount.toLocaleString('en-IN')} verified and credited!`,
             });
-            alert(`Payment of ₹${amount.toLocaleString('en-IN')} verified & credited!`);
-            await fetchTransactions();
+            await fetchBillingData();
             if (onBalanceUpdated) onBalanceUpdated();
           },
           theme: { color: '#ea580c' },
@@ -93,10 +115,10 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
         return;
       }
 
-      await fetchTransactions();
+      await fetchBillingData();
       if (onBalanceUpdated) onBalanceUpdated();
     } catch (err: any) {
-      alert(`Payment failed: ${err.message || 'Unknown error'}`);
+      setFeedback({ type: 'error', message: `Payment failed: ${err.message || 'Unknown error'}` });
     } finally {
       setIsProcessing(false);
     }
@@ -104,7 +126,6 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="p-6 rounded-3xl bg-white border border-slate-200/90 shadow-2xs">
         <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-orange-100/80 text-orange-800 text-xs font-semibold w-fit mb-3 border border-orange-200">
           <Wallet className="w-3.5 h-3.5 text-orange-600" />
@@ -114,249 +135,278 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
           Wallet, Razorpay Top-Up & GST Invoices
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl">
-          Trivaana tracks call duration down to whole integer paise (₹0.06/sec). Never pay for fractional rounding discrepancies. Download 18% GST tax invoices with input tax credit (ITC).
+          Append-only integer paise ledger with configurable voice tariffs, 30-second rounding rules, and 18% GST SAC 998313 tax invoices.
         </p>
       </div>
 
+      {feedback && (
+        <div
+          className={`p-4 rounded-2xl border text-xs flex items-center gap-2 ${
+            feedback.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-red-50 border-red-200 text-red-800'
+          }`}
+        >
+          {feedback.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+          <span>{feedback.message}</span>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* Left Column: Wallet Balance & Top-Up Chips */}
-        <div className="lg:col-span-5 space-y-6">
-          {/* Main Wallet Card */}
-          <div className="bg-slate-950 rounded-3xl p-6 text-white border border-slate-800 shadow-md relative overflow-hidden">
-            <div className="flex justify-between items-start mb-4">
-              <div>
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Prepaid Call Balance
-                </span>
-                <div className="text-3xl sm:text-4xl font-black text-white font-mono mt-1 flex items-baseline gap-1">
-                  <span className="text-orange-500 text-2xl">₹</span>
-                  <span>
-                    {(tenant?.wallet_balance ?? 5000).toLocaleString('en-IN', {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2,
-                    })}
-                  </span>
-                </div>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-orange-600/20 border border-orange-500/40 flex items-center justify-center text-orange-400">
-                <CreditCard className="w-5 h-5" />
-              </div>
+        <div className="lg:col-span-4 space-y-5">
+          <GlareHover className="rounded-[24px] shadow-xl">
+            <AuroraBackground className="p-6 rounded-[24px] bg-outpero-dark-card text-white border border-white/10">
+            <div className="text-[11px] font-bold text-[#ff8547] uppercase tracking-wider mb-1">
+              Available Prepaid Balance
+            </div>
+            <div className="font-display text-4xl font-extrabold tabular-nums flex items-baseline gap-1 my-2">
+              <span className="text-[#ff5500] text-2xl">₹</span>
+              <span>{(tenant?.wallet_balance ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+            </div>
+            <div className="text-[11px] text-slate-400 mb-6 flex items-center justify-between tabular-nums">
+              <span>Standard Rate: ₹{(tenant?.rate_per_min ?? 6.5).toFixed(2)}/min</span>
+              <WarmTooltip tip="HSN/SAC Telecom IT Services · 18% GST">
+                <span className="text-emerald-400 font-semibold">SAC: 998313</span>
+              </WarmTooltip>
             </div>
 
-            <div className="p-3 rounded-2xl bg-slate-900 border border-slate-800 text-xs space-y-2">
-              <div className="flex justify-between text-slate-300">
-                <span>Talk-Time Rate:</span>
-                <span className="font-mono text-orange-400 font-bold">
-                  ₹{tenant?.rate_per_min ?? 3.60} / min
-                </span>
+            <div className="space-y-3 pt-4 border-t border-slate-800">
+              <div className="text-xs font-bold text-slate-300">Add Credits</div>
+              <div className="grid grid-cols-3 gap-2">
+                {[500, 1000, 2500].map((amt) => (
+                  <button
+                    key={amt}
+                    onClick={() => setTopUpAmount(amt)}
+                    className={`py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                      topUpAmount === amt
+                        ? 'bg-orange-600 text-white border-orange-500'
+                        : 'bg-slate-900 border-slate-800 text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    ₹{amt.toLocaleString('en-IN')}
+                  </button>
+                ))}
               </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Per-Second Equivalent:</span>
-                <span className="font-mono text-emerald-400 font-bold">
-                  6 Paise / second
-                </span>
-              </div>
-              <div className="flex justify-between text-slate-300">
-                <span>Payment Gateway:</span>
-                <span className="text-white font-bold">Razorpay (UPI / Netbanking)</span>
-              </div>
-            </div>
-          </div>
 
-          {/* Quick Top-Up Form */}
-          <div className="bg-white rounded-3xl p-6 border border-slate-200/90 shadow-2xs space-y-4">
-            <h3 className="text-sm font-bold text-slate-900">
-              Quick Razorpay Recharge
-            </h3>
+              <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-[11px] space-y-1 text-slate-300">
+                <div className="flex justify-between"><span>Calling Credits:</span><span className="font-mono">₹{topUpAmount.toLocaleString('en-IN')}.00</span></div>
+                <div className="flex justify-between"><span>GST (18% SAC 998313):</span><span className="font-mono">₹{(topUpAmount * 0.18).toFixed(2)}</span></div>
+                <div className="flex justify-between border-t border-slate-800 pt-1 font-bold text-white"><span>Total Payable:</span><span className="font-mono">₹{(topUpAmount * 1.18).toFixed(2)}</span></div>
+              </div>
 
-            <div className="grid grid-cols-3 gap-2.5">
-              {[500, 1000, 2500, 5000, 10000].map((amt) => (
+              <ClickSpark className="w-full">
                 <button
-                  key={amt}
-                  type="button"
-                  onClick={() => setTopUpAmount(amt)}
-                  className={`py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                    topUpAmount === amt
-                      ? 'bg-orange-50 border-orange-400 text-orange-700 shadow-2xs'
-                      : 'bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100'
-                  }`}
+                  onClick={() => handleQuickRecharge(topUpAmount)}
+                  disabled={isProcessing}
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer disabled:opacity-50"
                 >
-                  ₹{amt.toLocaleString('en-IN')}
+                  <CreditCard className="w-4 h-4" />
+                  <span>{isProcessing ? 'Processing...' : `Add ₹${topUpAmount.toLocaleString('en-IN')} Credits`}</span>
                 </button>
-              ))}
+              </ClickSpark>
             </div>
+            </AuroraBackground>
+          </GlareHover>
 
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => handleQuickRecharge(topUpAmount)}
-                disabled={isProcessing}
-                className="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 disabled:opacity-50 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
-              >
-                {isProcessing ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Processing Razorpay Checkout...</span>
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Pay ₹{topUpAmount.toLocaleString('en-IN')} via Razorpay UPI</span>
-                  </>
-                )}
-              </button>
+          <div className="p-5 rounded-2xl bg-white border border-[#e4e4e9] shadow-2xs space-y-2.5 text-xs">
+            <div className="font-display font-bold text-[#0f0f14] flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+              <span>Billing, Voice Tiers &amp; GST Policy</span>
             </div>
-
-            <div className="flex items-center gap-2 text-[11px] text-slate-500 pt-1">
-              <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-              <span>Instant wallet credit with 18% GST invoice generation</span>
+            <div className="flex justify-between text-[#525260]">
+              <span>Current Plan:</span>
+              <span className="font-bold text-[#0f0f14] uppercase">{tenant?.plan || 'Growth'}</span>
+            </div>
+            <div className="flex justify-between text-[#525260] tabular-nums">
+              <span>Standard Voice Tier:</span>
+              <span className="font-semibold text-[#0f0f14]">₹5.00/min</span>
+            </div>
+            <div className="flex justify-between text-[#525260] tabular-nums">
+              <span>Premium Neural Tier:</span>
+              <span className="font-semibold text-[#ff5500]">₹6.80/min</span>
+            </div>
+            <div className="flex justify-between text-[#525260]">
+              <span>Unconnected Calls:</span>
+              <span className="font-semibold text-emerald-700">₹0.00 (Not Billed)</span>
+            </div>
+            <div className="flex justify-between text-[#525260]">
+              <span>GST Rate:</span>
+              <span className="font-semibold text-[#0f0f14]">18% (ITC Eligible)</span>
             </div>
           </div>
         </div>
 
-        {/* Right Column: Transactions & GST Invoices Table */}
-        <div className="lg:col-span-7 bg-white rounded-3xl p-6 border border-slate-200/90 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h2 className="text-base font-bold text-slate-900">
-                Integer Paise Ledger & GST Invoices
-              </h2>
-              <p className="text-xs text-slate-500">
-                Audited transaction history with downloadable GST tax receipts
-              </p>
+        <div className="lg:col-span-8 bg-white rounded-3xl p-6 border border-slate-200/90 shadow-2xs">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4 pb-4 border-b border-slate-100">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setActiveSubTab('ledger')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                  activeSubTab === 'ledger' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                Transaction Ledger ({transactions.length})
+              </button>
+              <button
+                onClick={() => setActiveSubTab('invoices')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                  activeSubTab === 'invoices' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                GST Invoices ({invoices.length})
+              </button>
+              <button
+                onClick={() => setActiveSubTab('billing_details')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer ${
+                  activeSubTab === 'billing_details' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-700'
+                }`}
+              >
+                Billing Details
+              </button>
             </div>
-            <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-              {transactions.length} Records
-            </span>
+            <button
+              onClick={fetchBillingData}
+              className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 transition-colors cursor-pointer"
+              title="Refresh"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-100 text-slate-400 font-semibold">
-                  <th className="pb-3 pl-2">Type</th>
-                  <th className="pb-3">Description</th>
-                  <th className="pb-3">Invoice #</th>
-                  <th className="pb-3">Paise</th>
-                  <th className="pb-3">Amount (INR)</th>
-                  <th className="pb-3 text-right pr-2">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {loading ? (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-400">
-                      Loading financial ledger...
-                    </td>
+          {activeSubTab === 'ledger' ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-200 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+                    <th className="py-3 px-2">Type</th>
+                    <th className="py-3 px-2">Description</th>
+                    <th className="py-3 px-2">Invoice</th>
+                    <th className="py-3 px-2 text-right">Amount</th>
+                    <th className="py-3 px-2 text-right">Balance</th>
                   </tr>
-                ) : transactions.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="py-8 text-center text-slate-400">
-                      No transactions recorded yet.
-                    </td>
-                  </tr>
-                ) : (
-                  transactions.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
-                      <td className="py-3 pl-2">
-                        {tx.type === 'credit' ? (
-                          <span className="inline-flex items-center gap-1 text-emerald-600 font-bold text-[11px]">
-                            <ArrowDownLeft className="w-3 h-3" /> Credit
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-xs">
+                  {loading ? (
+                    <tr><td colSpan={5} className="py-10 text-center text-slate-400">Loading ledger...</td></tr>
+                  ) : transactions.length === 0 ? (
+                    <tr><td colSpan={5} className="py-10 text-center text-slate-400">No transactions yet.</td></tr>
+                  ) : (
+                    transactions.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-slate-50/70">
+                        <td className="py-3 px-2">
+                          <span className={`inline-flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                            tx.type === 'credit'
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                              : 'bg-slate-100 text-slate-700 border-slate-200'
+                          }`}>
+                            {tx.type === 'credit' ? <ArrowDownLeft className="w-3 h-3" /> : <ArrowUpRight className="w-3 h-3" />}
+                            {tx.type.toUpperCase()}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-slate-600 font-bold text-[11px]">
-                            <ArrowUpRight className="w-3 h-3" /> Debit
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 font-medium text-slate-800">{tx.description}</td>
-                      <td className="py-3 font-mono text-[11px] text-slate-500">{tx.invoice_id}</td>
-                      <td className="py-3 font-mono text-slate-500">{tx.amount_paise}p</td>
-                      <td className={`py-3 font-mono font-bold ${
-                        tx.type === 'credit' ? 'text-emerald-600' : 'text-slate-900'
-                      }`}>
-                        {tx.type === 'credit' ? '+' : '-'}₹{tx.amount_inr.toFixed(2)}
-                      </td>
-                      <td className="py-3 text-right pr-2">
-                        <button
-                          onClick={() => setSelectedInvoice(tx)}
-                          className="text-orange-600 hover:text-orange-700 font-semibold text-[11px] inline-flex items-center gap-1 cursor-pointer"
-                        >
-                          <Download className="w-3 h-3" />
-                          <span>Invoice</span>
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="py-3 px-2 font-medium text-slate-900">{tx.description}</td>
+                        <td className="py-3 px-2 font-mono text-[11px] text-slate-500">{tx.invoice_id || '—'}</td>
+                        <td className={`py-3 px-2 text-right font-mono font-bold ${tx.type === 'credit' ? 'text-emerald-600' : 'text-slate-900'}`}>
+                          {tx.type === 'credit' ? '+' : '-'}₹{tx.amount_inr.toFixed(2)}
+                        </td>
+                        <td className="py-3 px-2 text-right font-mono text-slate-700">₹{tx.running_balance.toFixed(2)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          ) : activeSubTab === 'invoices' ? (
+            <div className="space-y-3">
+              {invoices.length === 0 ? (
+                <div className="py-10 text-center text-xs text-slate-400">No GST invoices generated yet. Top up credits to generate a tax invoice.</div>
+              ) : (
+                invoices.map((inv) => (
+                  <div key={inv.id} className="p-4 rounded-2xl border border-slate-200 flex items-center justify-between">
+                    <div>
+                      <div className="font-mono text-xs font-bold text-slate-900 flex items-center gap-2">
+                        <FileText className="w-4 h-4 text-orange-600" />
+                        <span>{inv.invoice_number}</span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">SAC {inv.sac_code}</span>
+                      </div>
+                      <div className="text-[11px] text-slate-500 mt-1">
+                        Subtotal: ₹{inv.subtotal_inr.toFixed(2)} • GST (18%): ₹{inv.gst_inr.toFixed(2)} • Total: ₹{inv.total_inr.toFixed(2)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => setSelectedInvoice(inv)}
+                      className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <Download className="w-3.5 h-3.5" /> View Tax Invoice
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : (
+            <form
+              onSubmit={async (e) => {
+                e.preventDefault();
+                await trivaanaApi.updateWorkspace({
+                  name: workspaceBilling.name,
+                  gstin: workspaceBilling.gstin,
+                  billing_email: workspaceBilling.billing_email,
+                });
+                setFeedback({ type: 'success', message: 'Billing & GST details saved to workspace.' });
+              }}
+              className="space-y-4 text-xs max-w-lg"
+            >
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Legal / Workspace Entity Name</label>
+                <input
+                  value={workspaceBilling.name}
+                  onChange={(e) => setWorkspaceBilling({ ...workspaceBilling, name: e.target.value })}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">GSTIN (15-character tax ID for ITC invoices)</label>
+                <input
+                  value={workspaceBilling.gstin}
+                  onChange={(e) => setWorkspaceBilling({ ...workspaceBilling, gstin: e.target.value.toUpperCase() })}
+                  placeholder="29ABCDE1234F1Z5"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block font-bold text-slate-700 mb-1">Billing & Invoice Email</label>
+                <input
+                  type="email"
+                  value={workspaceBilling.billing_email}
+                  onChange={(e) => setWorkspaceBilling({ ...workspaceBilling, billing_email: e.target.value })}
+                  placeholder="accounts@company.in"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                />
+              </div>
+              <button type="submit" className="px-5 py-2.5 rounded-xl bg-slate-900 text-white font-bold cursor-pointer">
+                Save Billing Details
+              </button>
+            </form>
+          )}
         </div>
       </div>
 
-      {/* Printable GST Invoice Modal */}
       {selectedInvoice && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-lg w-full p-8 shadow-2xl border border-slate-200 space-y-6">
-            <div className="flex justify-between items-start border-b border-slate-100 pb-4">
-              <div>
-                <span className="text-[10px] font-bold text-orange-600 uppercase tracking-widest block">
-                  Tax Invoice / Receipt
-                </span>
-                <h3 className="text-xl font-black text-slate-900 font-mono mt-0.5">
-                  {selectedInvoice.invoice_id}
-                </h3>
-              </div>
-              <button
-                onClick={() => setSelectedInvoice(null)}
-                className="text-slate-400 hover:text-slate-700 text-xs font-bold cursor-pointer"
-              >
-                ✕ Close
-              </button>
+        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b pb-3">
+              <div className="font-black text-slate-900">Tax Invoice {selectedInvoice.invoice_number}</div>
+              <button onClick={() => setSelectedInvoice(null)} className="text-xs font-bold text-slate-500 cursor-pointer">Close</button>
             </div>
-
-            <div className="text-xs space-y-3">
-              <div className="flex justify-between text-slate-600">
-                <span>Issued To:</span>
-                <span className="font-bold text-slate-900">{tenant?.name || 'Enterprise Customer'}</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Seller GSTIN:</span>
-                <span className="font-mono font-bold text-slate-900">37AAACT0000A1Z5</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>HSN / SAC Code:</span>
-                <span className="font-mono text-slate-900">998313 (IT & Cloud Services)</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Description:</span>
-                <span className="text-slate-900">{selectedInvoice.description}</span>
-              </div>
-              <div className="flex justify-between text-slate-600">
-                <span>Tax Breakdown:</span>
-                <span>CGST (9%) + SGST (9%) Included</span>
-              </div>
+            <div className="text-xs space-y-2 text-slate-600">
+              <div className="flex justify-between"><span>Workspace:</span><span className="font-bold text-slate-900">{tenant?.name}</span></div>
+              <div className="flex justify-between"><span>SAC Code:</span><span className="font-mono">{selectedInvoice.sac_code}</span></div>
+              <div className="flex justify-between"><span>Taxable Value:</span><span className="font-mono">₹{selectedInvoice.subtotal_inr.toFixed(2)}</span></div>
+              <div className="flex justify-between"><span>IGST / CGST+SGST (18%):</span><span className="font-mono">₹{selectedInvoice.gst_inr.toFixed(2)}</span></div>
+              <div className="flex justify-between border-t pt-2 font-bold text-slate-900 text-sm"><span>Total Paid:</span><span className="font-mono">₹{selectedInvoice.total_inr.toFixed(2)}</span></div>
             </div>
-
-            <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex justify-between items-center font-mono">
-              <span className="text-xs font-bold text-slate-700">Total Paid (INR):</span>
-              <span className="text-xl font-black text-slate-950">
-                ₹{selectedInvoice.amount_inr.toFixed(2)}
-              </span>
-            </div>
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  window.print();
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-orange-600 hover:bg-orange-500 text-white font-bold text-xs flex items-center justify-center gap-2 cursor-pointer shadow-xs"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Print / Save Tax PDF</span>
-              </button>
-            </div>
+            <button onClick={() => window.print()} className="w-full py-2.5 rounded-xl bg-orange-600 text-white text-xs font-bold cursor-pointer">
+              Print / Save PDF
+            </button>
           </div>
         </div>
       )}
