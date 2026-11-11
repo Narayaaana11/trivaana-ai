@@ -17,6 +17,7 @@ env/
 venv/
 ENV/
 .venv/
+.deps/
 
 # Database & local data
 *.db

@@ -57,7 +57,8 @@ def demo_auth_headers(client):
 @pytest.fixture
 def second_tenant_auth_headers(client):
     """Register and authenticate a secondary tenant to test strict cross-tenant isolation."""
-    email = "acme@example.com"
+    import uuid
+    email = f"acme_{uuid.uuid4().hex[:6]}@example.com"
     pwd = "Password@123"
     reg_resp = client.post("/api/auth/register", json={
         "email": email,

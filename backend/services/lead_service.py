@@ -18,10 +18,12 @@ class LeadService:
         conn: sqlite3.Connection,
         tenant_id: str,
         csv_text: str,
-        filename: str = "upload.csv"
+        filename: str = "upload.csv",
+        column_mapping: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
         """
         Validates CSV content row-by-row.
+        Supports optional explicit column mapping { "name": "CsvCol", "phone": "CsvPhone", ... }.
         Never fills missing numbers with fake defaults.
         Returns detailed summary and row-by-row rejection reasons.
         """
@@ -34,13 +36,14 @@ class LeadService:
         rejected_count = 0
         errors: List[Dict[str, Any]] = []
 
-        # Find column mappings flexibly (case-insensitive)
+        # Find column mappings: explicit override first, then flexible case-insensitive fallback
         headers = reader.fieldnames or []
-        name_col = next((h for h in headers if h.lower() in ("name", "full_name", "contact_name")), None)
-        phone_col = next((h for h in headers if h.lower() in ("phone", "mobile", "contact_number", "telephone")), None)
-        city_col = next((h for h in headers if h.lower() in ("city", "location", "town")), None)
-        vertical_col = next((h for h in headers if h.lower() in ("vertical", "industry", "sector")), None)
-        notes_col = next((h for h in headers if h.lower() in ("notes", "note", "remarks")), None)
+        cmap = column_mapping or {}
+        name_col = cmap.get("name") if cmap.get("name") in headers else next((h for h in headers if h.lower() in ("name", "full_name", "contact_name")), None)
+        phone_col = cmap.get("phone") if cmap.get("phone") in headers else next((h for h in headers if h.lower() in ("phone", "mobile", "contact_number", "telephone")), None)
+        city_col = cmap.get("city") if cmap.get("city") in headers else next((h for h in headers if h.lower() in ("city", "location", "town")), None)
+        vertical_col = cmap.get("vertical") if cmap.get("vertical") in headers else next((h for h in headers if h.lower() in ("vertical", "industry", "sector")), None)
+        notes_col = cmap.get("notes") if cmap.get("notes") in headers else next((h for h in headers if h.lower() in ("notes", "note", "remarks")), None)
 
         if not phone_col:
             return {

@@ -1,68 +1,161 @@
 """
-TRIVAANA AI: Lead Management, CSV Ingestion & Truthful Discovery Router
-Enforces tenant scoping, E.164 phone validation, row-by-row error reporting, and opt-out compliance.
+TRIVAANA AI: Lead & Contact CRM Management, CSV Ingestion, Contact Lists & Truthful Discovery Router
+Enforces tenant scoping, E.164 phone validation, row-by-row error reporting, pagination, and opt-out compliance.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
+from pydantic import BaseModel, Field
+import json
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
+
 from database.connection import get_db
 from core.dependencies import get_current_tenant
 from services.lead_service import LeadService
 from services.call_service import normalize_phone
+from services.compliance_service import ComplianceService
 
-router = APIRouter(prefix="/api/leads", tags=["Leads & Contacts"])
+router = APIRouter(prefix="/api", tags=["Leads & Contacts"])
+
 
 class CreateLeadRequest(BaseModel):
     name: str
     phone: str
+    email: Optional[str] = None
     city: Optional[str] = "Hyderabad"
     vertical: Optional[str] = "Real Estate"
+    lead_status: Optional[str] = "new"
+    source: Optional[str] = "Manual Entry"
+    call_category: Optional[str] = "service"
+    tags: List[str] = Field(default_factory=list)
+    custom_fields: Dict[str, Any] = Field(default_factory=dict)
+    follow_up_at: Optional[str] = None
+    callback_at: Optional[str] = None
     notes: Optional[str] = None
 
-@router.get("")
+
+class UpdateLeadRequest(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    city: Optional[str] = None
+    vertical: Optional[str] = None
+    lead_status: Optional[str] = None
+    status: Optional[str] = None
+    call_category: Optional[str] = None
+    tags: Optional[List[str]] = None
+    custom_fields: Optional[Dict[str, Any]] = None
+    follow_up_at: Optional[str] = None
+    callback_at: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BulkPasteContactsRequest(BaseModel):
+    contacts: List[Dict[str, Any]]
+    list_name: Optional[str] = None
+    source: str = "Paste Import"
+
+
+class CreateContactListRequest(BaseModel):
+    name: str
+    list_type: str = "reusable"  # 'reusable' | 'suppression'
+    description: Optional[str] = None
+    lead_ids: List[str] = Field(default_factory=list)
+    phones: List[str] = Field(default_factory=list)
+
+
+def _serialize_lead(row: sqlite3.Row) -> Dict[str, Any]:
+    d = dict(row)
+    d["tags"] = json.loads(d.pop("tags_json", "[]") or "[]")
+    d["custom_fields"] = json.loads(d.pop("custom_fields_json", "{}") or "{}")
+    d["lead_status"] = d.get("lead_status") or "new"
+    return d
+
+
+@router.get("/leads")
+@router.get("/contacts")
 def list_leads(
     search: Optional[str] = None,
     status: Optional[str] = None,
+    lead_status: Optional[str] = None,
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
 ):
     cur = db.cursor()
-    query = "SELECT * FROM leads WHERE tenant_id = ?"
-    params = [tenant["id"]]
+    where = "WHERE tenant_id = ?"
+    params: List[Any] = [tenant["id"]]
 
     if search:
-        query += " AND (name LIKE ? OR phone LIKE ? OR city LIKE ?)"
+        where += " AND (name LIKE ? OR phone LIKE ? OR city LIKE ? OR COALESCE(email,'') LIKE ?)"
         term = f"%{search}%"
-        params.extend([term, term, term])
+        params.extend([term, term, term, term])
 
     if status and status != "all":
-        query += " AND status = ?"
-        params.append(status)
+        where += " AND (status = ? OR lead_status = ?)"
+        params.extend([status, status])
 
-    query += " ORDER BY created_at DESC LIMIT 500"
-    cur.execute(query, params)
-    leads = [dict(r) for r in cur.fetchall()]
-    return {"leads": leads, "count": len(leads)}
+    if lead_status and lead_status != "all":
+        if lead_status == "do_not_call":
+            where += " AND (opt_out = 1 OR lead_status = 'do_not_call')"
+        else:
+            where += " AND lead_status = ?"
+            params.append(lead_status)
 
-@router.post("")
+    cur.execute(f"SELECT COUNT(*) as total FROM leads {where}", params)
+    total_count = cur.fetchone()["total"]
+
+    cur.execute(f"SELECT * FROM leads {where} ORDER BY created_at DESC LIMIT ? OFFSET ?", [*params, limit, offset])
+    leads = [_serialize_lead(r) for r in cur.fetchall()]
+    return {"leads": leads, "count": len(leads), "total": total_count, "limit": limit, "offset": offset}
+
+
+@router.get("/leads/{lead_id}")
+def get_lead_detail(
+    lead_id: str,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cur = db.cursor()
+    cur.execute("SELECT * FROM leads WHERE id = ? AND tenant_id = ?", (lead_id, tenant["id"]))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    lead = _serialize_lead(row)
+    cur.execute(
+        "SELECT id, agent_id, direction, status, outcome, duration_seconds, summary, created_at FROM calls WHERE tenant_id = ? AND (lead_id = ? OR phone = ?) ORDER BY created_at DESC LIMIT 50",
+        (tenant["id"], lead_id, row["phone"]),
+    )
+    lead["call_history"] = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        "SELECT * FROM consent_records WHERE tenant_id = ? AND phone = ? ORDER BY recorded_at DESC LIMIT 20",
+        (tenant["id"], row["phone"]),
+    )
+    lead["consent_history"] = [dict(r) for r in cur.fetchall()]
+    return lead
+
+
+@router.post("/leads")
+@router.post("/contacts")
 def create_lead(
     req: CreateLeadRequest,
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
 ):
     clean_phone = normalize_phone(req.phone)
-    if len(clean_phone) < 10:
+    digits = re.sub(r"[^\d]", "", clean_phone)
+    if len(digits) < 10 or len(digits) > 15:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid phone number: '{req.phone}'. Must be at least 10 digits."
+            detail=f"Invalid phone number: '{req.phone}'. Must be 10-15 digits."
         )
 
     cur = db.cursor()
-    # Check duplicate
     cur.execute("SELECT id FROM leads WHERE tenant_id = ? AND phone = ?", (tenant["id"], clean_phone))
     if cur.fetchone():
         raise HTTPException(
@@ -72,54 +165,199 @@ def create_lead(
 
     lead_id = f"lead_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc).isoformat()
+    is_dnc = req.lead_status == "do_not_call"
 
     cur.execute("""
-    INSERT INTO leads (id, tenant_id, name, phone, city, vertical, status, source, consent_status, opt_out, notes, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', 'Manual Entry', 'opted_in', 0, ?, ?)
-    """, (lead_id, tenant["id"], req.name.strip(), clean_phone, req.city, req.vertical, req.notes, now))
+    INSERT INTO leads (
+        id, tenant_id, name, phone, email, city, vertical, status, lead_status,
+        source, consent_status, call_category, opt_out, tags_json, custom_fields_json,
+        follow_up_at, callback_at, notes, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        lead_id, tenant["id"], req.name.strip(), clean_phone, req.email, req.city, req.vertical,
+        req.lead_status or "new", req.source or "Manual Entry",
+        "opted_out" if is_dnc else "opted_in", req.call_category or "service",
+        1 if is_dnc else 0, json.dumps(req.tags), json.dumps(req.custom_fields),
+        req.follow_up_at, req.callback_at, req.notes, now, now
+    ))
     db.commit()
 
-    lead_obj = {
-        "id": lead_id,
-        "tenant_id": tenant["id"],
-        "name": req.name.strip(),
-        "phone": clean_phone,
-        "city": req.city,
-        "vertical": req.vertical,
-        "status": "pending",
-        "source": "Manual Entry",
-        "consent_status": "opted_in",
-        "opt_out": 0,
-        "notes": req.notes,
-        "created_at": now
-    }
+    cur.execute("SELECT * FROM leads WHERE id = ?", (lead_id,))
+    lead_obj = _serialize_lead(cur.fetchone())
     return {"status": "success", "lead_id": lead_id, "phone": clean_phone, "lead": lead_obj}
 
-@router.post("/upload")
+
+@router.put("/leads/{lead_id}")
+@router.put("/contacts/{lead_id}")
+def update_lead(
+    lead_id: str,
+    req: UpdateLeadRequest,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cur = db.cursor()
+    cur.execute("SELECT * FROM leads WHERE id = ? AND tenant_id = ?", (lead_id, tenant["id"]))
+    existing = cur.fetchone()
+    if not existing:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    now = datetime.now(timezone.utc).isoformat()
+    fields = ["updated_at = ?"]
+    params: List[Any] = [now]
+
+    for col, val in {
+        "name": req.name,
+        "email": req.email,
+        "city": req.city,
+        "vertical": req.vertical,
+        "lead_status": req.lead_status,
+        "status": req.status,
+        "call_category": req.call_category,
+        "follow_up_at": req.follow_up_at,
+        "callback_at": req.callback_at,
+        "notes": req.notes,
+    }.items():
+        if val is not None:
+            fields.append(f"{col} = ?")
+            params.append(val)
+
+    if req.tags is not None:
+        fields.append("tags_json = ?")
+        params.append(json.dumps(req.tags))
+    if req.custom_fields is not None:
+        fields.append("custom_fields_json = ?")
+        params.append(json.dumps(req.custom_fields))
+    if req.lead_status == "do_not_call":
+        ComplianceService.add_dnc(db, tenant["id"], existing["phone"], reason="Marked Do Not Call in CRM", source="crm")
+
+    params.extend([lead_id, tenant["id"]])
+    cur.execute(f"UPDATE leads SET {', '.join(fields)} WHERE id = ? AND tenant_id = ?", params)
+    db.commit()
+    cur.execute("SELECT * FROM leads WHERE id = ?", (lead_id,))
+    return {"status": "success", "lead": _serialize_lead(cur.fetchone())}
+
+
+@router.delete("/leads/{lead_id}")
+def delete_lead(
+    lead_id: str,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cur = db.cursor()
+    cur.execute("DELETE FROM leads WHERE id = ? AND tenant_id = ?", (lead_id, tenant["id"]))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    db.commit()
+    return {"status": "deleted", "lead_id": lead_id}
+
+
+@router.post("/leads/upload")
 async def upload_leads_csv(
     file: UploadFile = File(...),
+    column_mapping: Optional[str] = Form(None),
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
 ):
     """
-    Ingest CSV file with row-level validation.
+    Ingest CSV file with row-level validation and optional explicit column mapping JSON.
     Never defaults missing phone numbers to fake numbers.
     """
+    filename = file.filename or "upload.csv"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in ("csv", "txt"):
+        raise HTTPException(status_code=400, detail="Only .csv or .txt lead files are supported")
+
     contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded CSV file is empty")
+    if len(contents) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="CSV file exceeds maximum allowed size of 10 MB")
+
+    parsed_mapping = None
+    if column_mapping:
+        try:
+            parsed_mapping = json.loads(column_mapping)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=400, detail="column_mapping must be valid JSON")
+
     try:
-        decoded = contents.decode("utf-8-sig")  # Handles UTF-8 with BOM cleanly
+        decoded = contents.decode("utf-8-sig")
     except UnicodeDecodeError:
         decoded = contents.decode("latin-1", errors="ignore")
 
-    result = LeadService.validate_and_import_csv(
+    return LeadService.validate_and_import_csv(
         conn=db,
         tenant_id=tenant["id"],
         csv_text=decoded,
-        filename=file.filename or "upload.csv"
+        filename=filename,
+        column_mapping=parsed_mapping,
     )
-    return result
 
-@router.get("/discover")
+
+@router.post("/leads/bulk-paste")
+def bulk_paste_contacts(
+    req: BulkPasteContactsRequest,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cur = db.cursor()
+    now = datetime.now(timezone.utc).isoformat()
+    imported = 0
+    rejected = 0
+    errors: List[Dict[str, Any]] = []
+    imported_ids: List[str] = []
+
+    for idx, item in enumerate(req.contacts, start=1):
+        raw_phone = str(item.get("phone") or "").strip()
+        raw_name = str(item.get("name") or "").strip()
+        clean_phone = normalize_phone(raw_phone)
+        digits = re.sub(r"[^\d]", "", clean_phone)
+        if len(digits) < 10 or len(digits) > 15:
+            rejected += 1
+            errors.append({"row": idx, "phone": raw_phone, "reason": "Invalid phone number"})
+            continue
+
+        cur.execute("SELECT id FROM leads WHERE tenant_id = ? AND phone = ?", (tenant["id"], clean_phone))
+        existing = cur.fetchone()
+        if existing:
+            rejected += 1
+            errors.append({"row": idx, "phone": clean_phone, "reason": "Duplicate phone number"})
+            continue
+
+        lead_id = f"lead_{uuid.uuid4().hex[:8]}"
+        known_keys = {"name", "phone", "email", "city", "vertical", "notes"}
+        custom_fields = {k: v for k, v in item.items() if k not in known_keys}
+        cur.execute("""
+        INSERT INTO leads (
+            id, tenant_id, name, phone, email, city, vertical, status, lead_status,
+            source, consent_status, opt_out, custom_fields_json, notes, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'new', ?, 'opted_in', 0, ?, ?, ?, ?)
+        """, (
+            lead_id, tenant["id"], raw_name or f"Contact {clean_phone[-4:]}", clean_phone,
+            item.get("email"), item.get("city") or "Hyderabad", item.get("vertical") or "General",
+            req.source, json.dumps(custom_fields), item.get("notes"), now, now
+        ))
+        imported += 1
+        imported_ids.append(lead_id)
+
+    list_id = None
+    if req.list_name and imported_ids:
+        list_id = f"lst_{uuid.uuid4().hex[:8]}"
+        cur.execute(
+            "INSERT INTO contact_lists (id, tenant_id, name, contact_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (list_id, tenant["id"], req.list_name.strip(), len(imported_ids), now, now),
+        )
+        for lid in imported_ids:
+            cur.execute(
+                "INSERT INTO contact_list_members (id, list_id, lead_id, tenant_id, created_at) VALUES (?, ?, ?, ?, ?)",
+                (f"clm_{uuid.uuid4().hex[:8]}", list_id, lid, tenant["id"], now),
+            )
+
+    db.commit()
+    return {"status": "success", "imported_count": imported, "rejected_count": rejected, "errors": errors, "list_id": list_id, "lead_ids": imported_ids}
+
+
+@router.get("/leads/discover")
 def discover_leads(
     city: str = "Hyderabad",
     vertical: str = "Real Estate",
@@ -127,11 +365,6 @@ def discover_leads(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
 ):
-    """
-    Truthful Lead Scout endpoint:
-    Returns 'not_configured' status when external provider is missing,
-    rather than fabricating random names and synthetic phone numbers.
-    """
     return LeadService.discover_leads_scout(
         conn=db,
         tenant_id=tenant["id"],
@@ -140,7 +373,8 @@ def discover_leads(
         limit=limit
     )
 
-@router.post("/{lead_id}/opt-out")
+
+@router.post("/leads/{lead_id}/opt-out")
 def toggle_opt_out(
     lead_id: str,
     opt_out: bool = True,
@@ -148,15 +382,97 @@ def toggle_opt_out(
     db: sqlite3.Connection = Depends(get_db)
 ):
     cur = db.cursor()
-    cur.execute("SELECT id FROM leads WHERE id = ? AND tenant_id = ?", (lead_id, tenant["id"]))
-    if not cur.fetchone():
+    cur.execute("SELECT id, phone FROM leads WHERE id = ? AND tenant_id = ?", (lead_id, tenant["id"]))
+    lead = cur.fetchone()
+    if not lead:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lead not found")
 
-    cur.execute("""
-    UPDATE leads
-    SET opt_out = ?, consent_status = ?
-    WHERE id = ? AND tenant_id = ?
-    """, (1 if opt_out else 0, "opted_out" if opt_out else "opted_in", lead_id, tenant["id"]))
-    db.commit()
+    if opt_out:
+        ComplianceService.add_dnc(db, tenant["id"], lead["phone"], reason="Opt-out via CRM", source="crm")
+    else:
+        cur.execute(
+            "UPDATE leads SET opt_out = 0, consent_status = 'opted_in', lead_status = 'new' WHERE id = ? AND tenant_id = ?",
+            (lead_id, tenant["id"])
+        )
+        cur.execute("DELETE FROM do_not_call_entries WHERE tenant_id = ? AND phone = ?", (tenant["id"], lead["phone"]))
+        db.commit()
 
     return {"status": "opted_out" if opt_out else "opted_in", "success": True, "lead_id": lead_id, "opt_out": 1 if opt_out else 0}
+
+
+@router.get("/contact-lists")
+def list_contact_lists(
+    list_type: Optional[str] = None,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cur = db.cursor()
+    q = "SELECT * FROM contact_lists WHERE tenant_id = ?"
+    params: list = [tenant["id"]]
+    if list_type:
+        q += " AND list_type = ?"
+        params.append(list_type)
+    q += " ORDER BY created_at DESC"
+    cur.execute(q, params)
+    return {"lists": [dict(r) for r in cur.fetchall()]}
+
+
+@router.post("/contact-lists")
+def create_contact_list(
+    req: CreateContactListRequest,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    list_id = f"lst_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc).isoformat()
+    cur = db.cursor()
+    lead_ids = list(req.lead_ids)
+
+    # If raw phones supplied, resolve or create lead entries
+    for raw_p in req.phones:
+        norm = normalize_phone(raw_p)
+        if len(re.sub(r"[^\d]", "", norm)) < 10:
+            continue
+        cur.execute("SELECT id FROM leads WHERE tenant_id = ? AND phone = ?", (tenant["id"], norm))
+        ex = cur.fetchone()
+        if ex:
+            lid = ex["id"]
+        else:
+            lid = f"lead_{uuid.uuid4().hex[:8]}"
+            cur.execute(
+                """
+                INSERT INTO leads (id, tenant_id, name, phone, city, vertical, status, lead_status, source, consent_status, opt_out, created_at, updated_at)
+                VALUES (?, ?, ?, ?, 'Hyderabad', 'General', 'pending', 'new', 'List Import', ?, ?, ?, ?)
+                """,
+                (lid, tenant["id"], f"Contact {norm[-4:]}", norm, "opted_out" if req.list_type == "suppression" else "opted_in", 1 if req.list_type == "suppression" else 0, now, now),
+            )
+        if req.list_type == "suppression":
+            ComplianceService.add_dnc(db, tenant["id"], norm, reason=f"Suppression list: {req.name}", source="suppression_list")
+        if lid not in lead_ids:
+            lead_ids.append(lid)
+
+    cur.execute(
+        "INSERT INTO contact_lists (id, tenant_id, name, list_type, description, contact_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (list_id, tenant["id"], req.name.strip(), req.list_type, req.description, len(lead_ids), now, now),
+    )
+    for lid in lead_ids:
+        cur.execute(
+            "INSERT INTO contact_list_members (id, list_id, lead_id, tenant_id, created_at) VALUES (?, ?, ?, ?, ?)",
+            (f"clm_{uuid.uuid4().hex[:8]}", list_id, lid, tenant["id"], now),
+        )
+    db.commit()
+    return {"status": "created", "list_id": list_id, "contact_count": len(lead_ids), "list_type": req.list_type}
+
+
+@router.delete("/contact-lists/{list_id}")
+def delete_contact_list(
+    list_id: str,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    cur = db.cursor()
+    cur.execute("DELETE FROM contact_lists WHERE id = ? AND tenant_id = ?", (list_id, tenant["id"]))
+    if cur.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Contact list not found")
+    db.commit()
+    return {"status": "deleted", "list_id": list_id}

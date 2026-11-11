@@ -1,13 +1,11 @@
 import React, { useState, useId } from 'react';
-import { CountUp, Magnet } from '@/components/reactbits';
+import { CountUp, Counter, ElasticSlider, SpecularButton } from '@/components/reactbits';
 import {
   Calculator,
   ArrowRight,
   Sparkles,
   TrendingUp,
   Clock,
-  CheckCircle2,
-  DollarSign,
   AlertCircle
 } from 'lucide-react';
 
@@ -49,7 +47,7 @@ export const RoiCalculatorSection: React.FC<RoiCalculatorSectionProps> = ({
         <div className="text-center max-w-3xl mx-auto mb-16">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-emerald-50 text-emerald-800 text-xs font-semibold mb-4 border border-emerald-200">
             <Calculator className="w-3.5 h-3.5 text-emerald-600" />
-            <span>Outpero-Benchmarked Unit Economics</span>
+            <span>Trivaana Unit Economics (Illustrative Model)</span>
           </div>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-950 tracking-tight">
             Calculate Your Immediate <br />
@@ -74,18 +72,16 @@ export const RoiCalculatorSection: React.FC<RoiCalculatorSectionProps> = ({
                     Monthly Inbound / Ad Leads
                   </label>
                   <span className="text-base font-extrabold text-orange-600 px-3 py-1 bg-orange-50 border border-orange-200 rounded-lg">
-                    {monthlyLeads.toLocaleString('en-IN')} leads
+                    <Counter value={monthlyLeads} /> leads
                   </span>
                 </div>
-                <input
+                <ElasticSlider
                   id={sliderId}
-                  type="range"
-                  min="500"
-                  max="25000"
-                  step="500"
+                  min={500}
+                  max={25000}
+                  step={500}
                   value={monthlyLeads}
-                  onChange={(e) => setMonthlyLeads(Number(e.target.value))}
-                  className="w-full h-2.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-orange-600"
+                  onChange={setMonthlyLeads}
                 />
                 <div className="flex justify-between text-xs text-slate-400 mt-2">
                   <span>500 (Early Stage)</span>
@@ -194,13 +190,13 @@ export const RoiCalculatorSection: React.FC<RoiCalculatorSectionProps> = ({
               </div>
 
               {/* CTA */}
-              <button
+              <SpecularButton
                 onClick={onEnterDashboard}
                 className="w-full py-3.5 px-6 rounded-xl bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2 cursor-pointer"
               >
                 <span>Launch Trivaana Mission Control</span>
                 <ArrowRight className="w-4 h-4" />
-              </button>
+              </SpecularButton>
             </div>
           </div>
         </div>

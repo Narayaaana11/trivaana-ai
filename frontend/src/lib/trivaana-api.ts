@@ -6,7 +6,10 @@ import {
   Agent,
   Transaction,
   PricingCatalog,
-  ReadinessStatus
+  ReadinessStatus,
+  VoiceProfile,
+  KnowledgeDocument,
+  CampaignItem
 } from '../types/trivaana';
 
 const API_BASE = '/api';
@@ -32,224 +35,718 @@ export function setAuthToken(token: string | null) {
   }
 }
 
-async function ensureAuthenticated(): Promise<string> {
-  const existing = getAuthToken();
-  if (existing) return existing;
-
-  // Auto-login with isolated seeded enterprise demo credentials
-  try {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: 'demo@trivaana.ai',
-        password: 'Trivaana@2026'
-      })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setAuthToken(data.access_token);
-      return data.access_token;
-    }
-  } catch (err) {
-    console.warn('Auto-auth bootstrap notice:', err);
-  }
-  return '';
-}
-
 async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
-  let token = await ensureAuthenticated();
+  const token = getAuthToken();
   const headers = new Headers(options.headers || {});
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  let res = await fetch(url, { ...options, headers });
-
-  // If 401, refresh token once and retry
+  const res = await fetch(url, { ...options, headers });
   if (res.status === 401) {
     setAuthToken(null);
-    token = await ensureAuthenticated();
-    if (token) {
-      headers.set('Authorization', `Bearer ${token}`);
-      res = await fetch(url, { ...options, headers });
-    }
   }
-
   return res;
 }
 
+async function parseJsonOrThrow(res: Response, fallbackMsg: string): Promise<any> {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || fallbackMsg);
+  }
+  return res.json();
+}
+
 export const trivaanaApi = {
+  // Authentication
+  async login(credentials: { email: string; password: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(credentials)
+    });
+    const data = await parseJsonOrThrow(res, 'Invalid email or password');
+    setAuthToken(data.access_token);
+    return data;
+  },
+
+  async register(details: { email: string; password: string; full_name: string; organization_name?: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(details)
+    });
+    const data = await parseJsonOrThrow(res, 'Registration failed');
+    setAuthToken(data.access_token);
+    return data;
+  },
+
+  async getMe(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/auth/me`);
+    return parseJsonOrThrow(res, 'Failed to fetch user profile');
+  },
+
+  async requestPasswordReset(email: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/password-reset/request`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    return parseJsonOrThrow(res, 'Failed to request password reset');
+  },
+
+  async confirmPasswordReset(token: string, newPassword: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/password-reset/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, new_password: newPassword }),
+    });
+    return parseJsonOrThrow(res, 'Failed to reset password');
+  },
+
+  async requestEmailVerification(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/auth/email-verification/request`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to request email verification');
+  },
+
+  async confirmEmailVerification(token: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/email-verification/confirm`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    });
+    return parseJsonOrThrow(res, 'Failed to verify email');
+  },
+
+  async updateProfile(payload: { full_name?: string; avatar_url?: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/auth/profile`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to update profile');
+  },
+
+  logout(): void {
+    setAuthToken(null);
+  },
+
+  isAuthenticated(): boolean {
+    return Boolean(getAuthToken());
+  },
+
+  // Tenant & Analytics
   async getTenant(): Promise<Tenant> {
     const res = await authFetch(`${API_BASE}/tenant`);
-    if (!res.ok) throw new Error('Failed to fetch tenant');
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to fetch tenant workspace');
+  },
+
+  async getAnalytics(filters?: { days?: number; agent_id?: string; campaign_id?: string; direction?: string; outcome?: string }): Promise<AnalyticsStats> {
+    const qs = new URLSearchParams();
+    if (filters?.days) qs.set('days', String(filters.days));
+    if (filters?.agent_id) qs.set('agent_id', filters.agent_id);
+    if (filters?.campaign_id) qs.set('campaign_id', filters.campaign_id);
+    if (filters?.direction) qs.set('direction', filters.direction);
+    if (filters?.outcome) qs.set('outcome', filters.outcome);
+    const res = await authFetch(`${API_BASE}/analytics?${qs.toString()}`);
+    return parseJsonOrThrow(res, 'Failed to fetch analytics');
   },
 
   async getStats(): Promise<AnalyticsStats> {
-    const res = await authFetch(`${API_BASE}/stats`);
-    if (!res.ok) throw new Error('Failed to fetch stats');
-    return res.json();
+    return this.getAnalytics();
   },
 
-  async getLeads(search?: string, status?: string): Promise<{ leads: Lead[]; count: number }> {
-    const params = new URLSearchParams();
-    if (search) params.append('search', search);
-    if (status) params.append('status', status);
-    const res = await authFetch(`${API_BASE}/leads?${params.toString()}`);
-    if (!res.ok) throw new Error('Failed to fetch leads');
-    return res.json();
-  },
-
-  async createLead(name: string, phone: string, city: string, vertical: string, notes?: string): Promise<any> {
-    const res = await authFetch(`${API_BASE}/leads`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, phone, city, vertical, notes }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to create lead');
-    }
-    return res.json();
-  },
-
-  async discoverLeads(city: string, vertical: string, limit: number = 15): Promise<any> {
-    const res = await authFetch(`${API_BASE}/leads/discover?city=${encodeURIComponent(city)}&vertical=${encodeURIComponent(vertical)}&limit=${limit}`);
-    if (!res.ok) throw new Error('Failed to run OSM Scout');
-    return res.json();
-  },
-
-  async uploadLeadsCsv(file: File): Promise<any> {
-    const formData = new FormData();
-    formData.append('file', file);
-    const res = await authFetch(`${API_BASE}/leads/upload`, {
-      method: 'POST',
-      body: formData,
-    });
-    if (!res.ok) throw new Error('Failed to upload leads CSV');
-    return res.json();
-  },
-
-  async toggleLeadOptOut(leadId: string, optOut: boolean = true): Promise<any> {
-    const res = await authFetch(`${API_BASE}/leads/${leadId}/opt-out?opt_out=${optOut}`, {
-      method: 'POST',
-    });
-    if (!res.ok) throw new Error('Failed to update lead opt-out status');
-    return res.json();
-  },
-
-  async getCalls(): Promise<{ calls: CallLog[]; count: number }> {
-    const res = await authFetch(`${API_BASE}/calls`);
-    if (!res.ok) throw new Error('Failed to fetch calls');
-    return res.json();
-  },
-
-  async triggerInstantCall(
-    name: string,
-    phone: string,
-    vertical: string = 'Real Estate',
-    language: string = 'te-IN',
-    agentId?: string
-  ): Promise<any> {
-    const res = await authFetch(`${API_BASE}/calls/instant`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name,
-        phone,
-        vertical,
-        language,
-        agent_id: agentId,
-        is_sandbox: false
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to trigger instant call');
-    }
-    return res.json();
-  },
-
-  async retriggerWhatsApp(callId: string): Promise<any> {
-    const res = await authFetch(`${API_BASE}/calls/${callId}/whatsapp`, {
-      method: 'POST',
-    });
-    if (!res.ok) throw new Error('Failed to trigger WhatsApp follow-up');
-    return res.json();
-  },
-
-  async getAgents(): Promise<{ agents: Agent[] }> {
+  // AI Employees (Agents)
+  async getAgents(): Promise<{ agents: Agent[]; count: number }> {
     const res = await authFetch(`${API_BASE}/agents`);
-    if (!res.ok) throw new Error('Failed to fetch agents');
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to fetch AI employees');
   },
 
-  async updateAgent(agentId: string, updates: Partial<Agent>): Promise<Agent> {
-    const res = await authFetch(`${API_BASE}/agents/${agentId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(updates),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to update agent configuration');
-    }
-    return res.json();
+  async getAgent(agentId: string): Promise<Agent> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}`);
+    return parseJsonOrThrow(res, 'Failed to fetch AI employee');
   },
 
-  async createAgent(agent: {
-    name: string;
-    vertical: string;
-    language: string;
-    voice_model?: string;
-    provider?: string;
-    system_prompt: string;
-    speech_rate?: number;
-  }): Promise<Agent> {
+  async createAgent(agent: Partial<Agent>): Promise<any> {
     const res = await authFetch(`${API_BASE}/agents`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(agent),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to create agent');
-    }
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to create AI employee');
   },
 
-  async startCampaign(concurrency: number, maxCalls: number, bypassTrai: boolean = false): Promise<any> {
+  async updateAgent(agentId: string, updates: Partial<Agent> & { change_note?: string }): Promise<Agent> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    return parseJsonOrThrow(res, 'Failed to update AI employee');
+  },
+
+  async updateAgentLifecycle(agentId: string, status: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/lifecycle`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    return parseJsonOrThrow(res, 'Failed to update lifecycle status');
+  },
+
+  async generateAgentPrompt(payload: {
+    description: string;
+    employee_name?: string;
+    business_name?: string;
+    industry?: string;
+    designation?: string;
+    language?: string;
+    call_direction?: string;
+    speaking_style?: string;
+  }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/generate-prompt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to generate AI prompt');
+  },
+
+  async getPromptVersions(agentId: string): Promise<{ versions: any[] }> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/prompt/versions`);
+    return parseJsonOrThrow(res, 'Failed to fetch prompt versions');
+  },
+
+  async restorePromptVersion(agentId: string, versionId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/prompt/restore/${versionId}`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to restore prompt version');
+  },
+
+  async testAgentTurn(agentId: string, message: string, history: Array<{ sender: string; text: string }> = []): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/test-turn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, history }),
+    });
+    return parseJsonOrThrow(res, 'Failed to test AI employee');
+  },
+
+  async rotateIntakeSecret(agentId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/intake-secret/rotate`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to rotate intake secret');
+  },
+
+  // Voices & Voice Engine
+  async getVoices(filters?: { language?: string; gender?: string; provider?: string }): Promise<{ voices: VoiceProfile[]; providers: Record<string, boolean> }> {
+    const qs = new URLSearchParams();
+    if (filters?.language) qs.set('language', filters.language);
+    if (filters?.gender) qs.set('gender', filters.gender);
+    if (filters?.provider) qs.set('provider', filters.provider);
+    const res = await authFetch(`${API_BASE}/voices?${qs.toString()}`);
+    return parseJsonOrThrow(res, 'Failed to fetch voices');
+  },
+
+  async previewVoice(payload: { voice_id: string; provider: string; language: string; text: string; speed?: number; stability?: number }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voices/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to preview voice');
+  },
+
+  async testVoiceProfile(voiceProfileId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voices/${voiceProfileId}/test`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to test voice profile');
+  },
+
+  async getVoiceEngineStatus(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voice-engine/status`);
+    return parseJsonOrThrow(res, 'Failed to fetch voice engine status');
+  },
+
+  async runPipelineTurn(payload: { agent_id: string; message: string; history?: any[]; barge_in?: boolean; synthesize_audio?: boolean }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voice-engine/pipeline-turn`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to execute voice pipeline turn');
+  },
+
+  async benchmarkVoicePipeline(agentId?: string): Promise<any> {
+    const url = agentId ? `${API_BASE}/voice-engine/benchmark?agent_id=${encodeURIComponent(agentId)}` : `${API_BASE}/voice-engine/benchmark`;
+    const res = await authFetch(url, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to benchmark voice pipeline');
+  },
+
+  // Leads & Contacts
+  async getLeads(search?: string, leadStatus?: string): Promise<{ leads: Lead[]; count: number; total?: number }> {
+    const qs = new URLSearchParams();
+    if (search) qs.set('search', search);
+    if (leadStatus && leadStatus !== 'all') qs.set('lead_status', leadStatus);
+    const res = await authFetch(`${API_BASE}/leads?${qs.toString()}`);
+    return parseJsonOrThrow(res, 'Failed to fetch leads');
+  },
+
+  async createLead(lead: Partial<Lead>): Promise<any> {
+    const res = await authFetch(`${API_BASE}/leads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lead),
+    });
+    return parseJsonOrThrow(res, 'Failed to create lead');
+  },
+
+  async updateLead(leadId: string, updates: Partial<Lead>): Promise<any> {
+    const res = await authFetch(`${API_BASE}/leads/${leadId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    return parseJsonOrThrow(res, 'Failed to update lead');
+  },
+
+  async bulkPasteLeads(contacts: any[], listName?: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/leads/bulk-paste`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contacts, list_name: listName }),
+    });
+    return parseJsonOrThrow(res, 'Failed to import pasted contacts');
+  },
+
+  async discoverLeads(city: string, vertical: string, limit: number = 15): Promise<any> {
+    const res = await authFetch(`${API_BASE}/leads/discover?city=${encodeURIComponent(city)}&vertical=${encodeURIComponent(vertical)}&limit=${limit}`);
+    return parseJsonOrThrow(res, 'Failed to query Lead Scout');
+  },
+
+  async uploadLeadsCsv(file: File, columnMapping?: Record<string, string>): Promise<any> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (columnMapping) {
+      formData.append('column_mapping', JSON.stringify(columnMapping));
+    }
+    const res = await authFetch(`${API_BASE}/leads/upload`, { method: 'POST', body: formData });
+    return parseJsonOrThrow(res, 'Failed to upload leads CSV');
+  },
+
+  async toggleLeadOptOut(leadId: string, optOut: boolean = true): Promise<any> {
+    const res = await authFetch(`${API_BASE}/leads/${leadId}/opt-out?opt_out=${optOut}`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to update opt-out status');
+  },
+
+  async getLeadDetail(leadId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/leads/${leadId}`);
+    return parseJsonOrThrow(res, 'Failed to load lead details');
+  },
+
+  async getContactLists(listType?: string): Promise<{ lists: any[] }> {
+    const url = listType ? `${API_BASE}/contact-lists?list_type=${encodeURIComponent(listType)}` : `${API_BASE}/contact-lists`;
+    const res = await authFetch(url);
+    return parseJsonOrThrow(res, 'Failed to fetch contact lists');
+  },
+
+  async createContactList(payload: { name: string; list_type?: string; description?: string; phones?: string[]; lead_ids?: string[] }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/contact-lists`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to create contact list');
+  },
+
+  async deleteContactList(listId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/contact-lists/${listId}`, { method: 'DELETE' });
+    return parseJsonOrThrow(res, 'Failed to delete contact list');
+  },
+
+  // Calls & Transcripts
+  async getCalls(filters?: { direction?: string; agent_id?: string; search?: string; outcome?: string }): Promise<{ calls: CallLog[]; count: number }> {
+    const qs = new URLSearchParams();
+    if (filters?.direction) qs.set('direction', filters.direction);
+    if (filters?.agent_id) qs.set('agent_id', filters.agent_id);
+    if (filters?.search) qs.set('search', filters.search);
+    if (filters?.outcome) qs.set('outcome', filters.outcome);
+    const res = await authFetch(`${API_BASE}/calls?${qs.toString()}`);
+    return parseJsonOrThrow(res, 'Failed to fetch calls');
+  },
+
+  async getActiveCalls(): Promise<{ active_calls: CallLog[]; count: number }> {
+    const res = await authFetch(`${API_BASE}/calls/active`);
+    return parseJsonOrThrow(res, 'Failed to fetch active calls');
+  },
+
+  async getCallDetail(callId: string): Promise<CallLog> {
+    const res = await authFetch(`${API_BASE}/calls/${callId}`);
+    return parseJsonOrThrow(res, 'Failed to fetch call detail');
+  },
+
+  async analyzeCall(callId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/calls/${callId}/analyze`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to analyze call');
+  },
+
+  async triggerInstantCall(
+    nameOrPayload: string | { name: string; phone: string; vertical?: string; language?: string; agent_id?: string; is_sandbox?: boolean; call_category?: string },
+    phone?: string,
+    vertical: string = 'Real Estate',
+    language: string = 'te-IN',
+    agentId?: string
+  ): Promise<any> {
+    const payload = typeof nameOrPayload === 'object'
+      ? nameOrPayload
+      : { name: nameOrPayload, phone, vertical, language, agent_id: agentId, is_sandbox: false };
+
+    const res = await authFetch(`${API_BASE}/calls/instant`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to dispatch instant call');
+  },
+
+  async simulateInboundCall(payload: { to_number: string; from_number: string; caller_name?: string; initial_query?: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/inbound/simulate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to simulate inbound call');
+  },
+
+  async retriggerWhatsApp(callId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/calls/${callId}/whatsapp`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to trigger WhatsApp follow-up');
+  },
+
+  // Campaigns
+  async getCampaigns(): Promise<{ campaigns: CampaignItem[]; count: number }> {
+    const res = await authFetch(`${API_BASE}/campaigns`);
+    return parseJsonOrThrow(res, 'Failed to fetch campaigns');
+  },
+
+  async getCampaignDetail(campaignId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/campaigns/${campaignId}`);
+    return parseJsonOrThrow(res, 'Failed to fetch campaign details');
+  },
+
+  async createCampaign(payload: { name: string; agent_id?: string; list_id?: string; suppression_list_id?: string; concurrency?: number; retry_attempts?: number; retry_delay_minutes?: number; calling_hours?: any; calling_days?: string[]; scheduled_at?: string; is_sandbox?: boolean }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/campaigns`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to create campaign');
+  },
+
+  async processCampaignRetries(campaignId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/campaigns/${campaignId}/process-retries`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to process campaign retries');
+  },
+
+  async startCampaign(
+    concurrencyOrPayload?: number | { campaign_id?: string; concurrency?: number; max_calls?: number; bypass_trai?: boolean; is_sandbox?: boolean },
+    maxCalls: number = 20,
+    bypassTrai: boolean = false
+  ): Promise<any> {
+    const payload = typeof concurrencyOrPayload === 'object'
+      ? concurrencyOrPayload
+      : { concurrency: concurrencyOrPayload || 5, max_calls: maxCalls, bypass_trai: bypassTrai };
+
     const res = await authFetch(`${API_BASE}/campaigns/start`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ concurrency, max_calls: maxCalls, bypass_trai: bypassTrai }),
+      body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to start campaign');
-    }
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to start campaign');
   },
 
-  async killCampaign(): Promise<any> {
+  async simulateCampaignProgress(campaignId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/campaigns/${campaignId}/simulate-progress`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to simulate campaign progress');
+  },
+
+  async pauseCampaign(campaignId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/campaigns/${campaignId}/pause`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to pause campaign');
+  },
+
+  async resumeCampaign(campaignId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/campaigns/${campaignId}/resume`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to resume campaign');
+  },
+
+  async killCampaign(campaignId?: string): Promise<any> {
     const res = await authFetch(`${API_BASE}/campaigns/kill`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ campaign_id: campaignId || null }),
     });
-    if (!res.ok) throw new Error('Failed to activate emergency kill switch');
-    return res.json();
+    return parseJsonOrThrow(res, 'Emergency kill switch failed');
   },
 
+  // Voice Broadcasts
+  async getBroadcasts(): Promise<{ broadcasts: any[]; count: number }> {
+    const res = await authFetch(`${API_BASE}/broadcasts`);
+    return parseJsonOrThrow(res, 'Failed to fetch broadcasts');
+  },
+
+  async createBroadcast(payload: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/broadcasts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to create voice broadcast');
+  },
+
+  async startBroadcast(broadcastId: string, isSandbox: boolean = true): Promise<any> {
+    const res = await authFetch(`${API_BASE}/broadcasts/${broadcastId}/start?is_sandbox=${isSandbox}`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to start broadcast');
+  },
+
+  async pauseBroadcast(broadcastId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/broadcasts/${broadcastId}/pause`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to pause broadcast');
+  },
+
+  async uploadBroadcastAudio(file: File): Promise<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await authFetch(`${API_BASE}/broadcasts/upload-audio`, { method: 'POST', body: fd });
+    return parseJsonOrThrow(res, 'Failed to upload broadcast audio');
+  },
+
+  async uploadBroadcastCsv(broadcastId: string, file: File): Promise<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await authFetch(`${API_BASE}/broadcasts/${broadcastId}/recipients/csv`, { method: 'POST', body: fd });
+    return parseJsonOrThrow(res, 'Failed to upload broadcast recipients CSV');
+  },
+
+  // Knowledge Base
+  async getKnowledgeDocuments(agentId?: string): Promise<{ documents: KnowledgeDocument[] }> {
+    const url = agentId ? `${API_BASE}/knowledge/documents?agent_id=${encodeURIComponent(agentId)}` : `${API_BASE}/knowledge/documents`;
+    const res = await authFetch(url);
+    return parseJsonOrThrow(res, 'Failed to fetch knowledge documents');
+  },
+
+  async addKnowledgeText(payload: { title: string; content: string; source_type: string; agent_id?: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/knowledge/documents/text`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to ingest knowledge text');
+  },
+
+  async addKnowledgeUrl(payload: { title?: string; url: string; agent_id?: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/knowledge/documents/url`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to ingest URL');
+  },
+
+  async uploadKnowledgeFile(file: File, agentId?: string): Promise<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    if (agentId) fd.append('agent_id', agentId);
+    const res = await authFetch(`${API_BASE}/knowledge/documents/upload`, { method: 'POST', body: fd });
+    return parseJsonOrThrow(res, 'Failed to upload knowledge document');
+  },
+
+  async deleteKnowledgeDocument(docId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/knowledge/documents/${docId}`, { method: 'DELETE' });
+    return parseJsonOrThrow(res, 'Failed to delete knowledge document');
+  },
+
+  async searchKnowledge(query: string, agentId?: string): Promise<{ results: any[] }> {
+    const res = await authFetch(`${API_BASE}/knowledge/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, agent_id: agentId, top_k: 4 }),
+    });
+    return parseJsonOrThrow(res, 'Knowledge retrieval search failed');
+  },
+
+  // Actions
+  async getAgentActions(agentId: string): Promise<{ actions: any[] }> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/actions`);
+    return parseJsonOrThrow(res, 'Failed to load agent actions');
+  },
+
+  async createAgentAction(agentId: string, payload: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/actions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to create agent action');
+  },
+
+  async deleteAgentAction(agentId: string, actionId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/agents/${agentId}/actions/${actionId}`, { method: 'DELETE' });
+    return parseJsonOrThrow(res, 'Failed to delete agent action');
+  },
+
+  // Integrations & Webhooks
+  async getIntegrations(): Promise<{ integrations: any[] }> {
+    const res = await authFetch(`${API_BASE}/integrations`);
+    return parseJsonOrThrow(res, 'Failed to fetch integrations');
+  },
+
+  async connectIntegration(providerKey: string, config: Record<string, any>): Promise<any> {
+    const res = await authFetch(`${API_BASE}/integrations/${providerKey}/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+    return parseJsonOrThrow(res, 'Failed to connect integration');
+  },
+
+  async testIntegration(providerKey: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/integrations/${providerKey}/test`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to test integration');
+  },
+
+  async getWebhooks(): Promise<{ webhooks: any[] }> {
+    const res = await authFetch(`${API_BASE}/webhooks`);
+    return parseJsonOrThrow(res, 'Failed to fetch webhooks');
+  },
+
+  async createWebhook(payload: { name: string; url: string; events: string[]; include_transcripts?: boolean }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/webhooks`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to create webhook');
+  },
+
+  async rotateWebhookSecret(webhookId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/webhooks/${webhookId}/rotate-secret`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to rotate webhook secret');
+  },
+
+  async deleteWebhook(webhookId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/webhooks/${webhookId}`, { method: 'DELETE' });
+    return parseJsonOrThrow(res, 'Failed to delete webhook');
+  },
+
+  async getWebhookDeliveries(): Promise<{ deliveries: any[] }> {
+    const res = await authFetch(`${API_BASE}/webhooks/deliveries`);
+    return parseJsonOrThrow(res, 'Failed to fetch webhook deliveries');
+  },
+
+  async getIntegrationLogs(): Promise<{ logs: any[] }> {
+    const res = await authFetch(`${API_BASE}/integrations/logs`);
+    return parseJsonOrThrow(res, 'Failed to fetch integration logs');
+  },
+
+  async retryIntegrationLog(logId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/integrations/logs/${logId}/retry`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to retry integration log');
+  },
+
+  async getWhatsAppTemplates(): Promise<{ templates: any[] }> {
+    const res = await authFetch(`${API_BASE}/whatsapp/templates`);
+    return parseJsonOrThrow(res, 'Failed to fetch WhatsApp templates');
+  },
+
+  async createWhatsAppTemplate(payload: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/whatsapp/templates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to create WhatsApp template');
+  },
+
+  async getCallerMemories(): Promise<{ memories: any[] }> {
+    const res = await authFetch(`${API_BASE}/caller-memory`);
+    return parseJsonOrThrow(res, 'Failed to fetch caller memories');
+  },
+
+  async deleteCallerMemory(memoryId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/caller-memory/${memoryId}`, { method: 'DELETE' });
+    return parseJsonOrThrow(res, 'Failed to delete caller memory');
+  },
+
+  async getConsents(): Promise<{ consents: any[] }> {
+    const res = await authFetch(`${API_BASE}/compliance/consents`);
+    return parseJsonOrThrow(res, 'Failed to fetch consent records');
+  },
+
+  async getAuditLogs(): Promise<{ audit_logs: any[] }> {
+    const res = await authFetch(`${API_BASE}/audit-logs`);
+    return parseJsonOrThrow(res, 'Failed to fetch audit logs');
+  },
+
+  async getAdminFailedCalls(): Promise<{ failed_calls: any[] }> {
+    const res = await authFetch(`${API_BASE}/admin/failed-calls`);
+    return parseJsonOrThrow(res, 'Failed to fetch failed calls');
+  },
+
+  async getAdminSystemErrors(): Promise<{ errors: any[] }> {
+    const res = await authFetch(`${API_BASE}/admin/system-errors`);
+    return parseJsonOrThrow(res, 'Failed to fetch system errors');
+  },
+
+  async getAdminAuditLogs(): Promise<{ audit_logs: any[] }> {
+    const res = await authFetch(`${API_BASE}/admin/audit-logs`);
+    return parseJsonOrThrow(res, 'Failed to fetch platform audit logs');
+  },
+
+  // Phone Numbers & Channels
+  async getPhoneNumbers(): Promise<{ phone_numbers: any[]; channels: any[]; provider_status: any }> {
+    const res = await authFetch(`${API_BASE}/phone-numbers`);
+    return parseJsonOrThrow(res, 'Failed to fetch phone numbers');
+  },
+
+  async requestPhoneNumber(payload: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/phone-numbers`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to provision phone number');
+  },
+
+  async updatePhoneNumber(numberId: string, updates: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/phone-numbers/${numberId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    return parseJsonOrThrow(res, 'Failed to update phone number');
+  },
+
+  async addCallingChannel(payload: { provider: string; channel_capacity: number; phone_number_id?: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/channels`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to add channels');
+  },
+
+  // Billing & Invoices
   async getPricing(): Promise<PricingCatalog> {
     const res = await authFetch(`${API_BASE}/billing/pricing`);
-    if (!res.ok) throw new Error('Failed to fetch pricing catalog');
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to fetch pricing catalog');
   },
 
   async getTransactions(): Promise<{ transactions: Transaction[] }> {
     const res = await authFetch(`${API_BASE}/billing/transactions`);
-    if (!res.ok) throw new Error('Failed to fetch transactions');
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to fetch transactions');
+  },
+
+  async getInvoices(): Promise<{ invoices: any[] }> {
+    const res = await authFetch(`${API_BASE}/billing/invoices`);
+    return parseJsonOrThrow(res, 'Failed to fetch invoices');
   },
 
   async createRazorpayOrder(amountInr: number): Promise<any> {
@@ -258,24 +755,20 @@ export const trivaanaApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount_inr: amountInr }),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to create Razorpay order');
-    }
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to create Razorpay order');
   },
 
-  async submitRazorpayWebhook(payload: { order_id: string; payment_id: string; signature: string; amount_inr: number }): Promise<any> {
-    const res = await authFetch(`${API_BASE}/billing/razorpay-webhook`, {
+  async verifyRazorpayPayment(payload: { order_id: string; payment_id: string; signature: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/billing/razorpay-verification`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to process Razorpay payment');
-    }
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to verify Razorpay payment');
+  },
+
+  async submitRazorpayWebhook(payload: { order_id: string; payment_id: string; signature: string; amount_inr?: number }): Promise<any> {
+    return this.verifyRazorpayPayment(payload);
   },
 
   async sandboxTopup(amountInr: number): Promise<any> {
@@ -284,16 +777,159 @@ export const trivaanaApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ amount_inr: amountInr }),
     });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || 'Failed to perform sandbox top-up');
-    }
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to perform sandbox top-up');
+  },
+
+  // Compliance, Workspaces, Notifications, Super Admin
+  async getCompliancePolicy(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/compliance/policy`);
+    return parseJsonOrThrow(res, 'Failed to fetch compliance policy');
+  },
+
+  async updateCompliancePolicy(updates: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/compliance/policy`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    return parseJsonOrThrow(res, 'Failed to update compliance policy');
+  },
+
+  async getDncEntries(): Promise<{ entries: any[] }> {
+    const res = await authFetch(`${API_BASE}/compliance/dnc`);
+    return parseJsonOrThrow(res, 'Failed to fetch DNC registry');
+  },
+
+  async addDncEntry(phone: string, reason: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/compliance/dnc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, reason }),
+    });
+    return parseJsonOrThrow(res, 'Failed to add DNC entry');
+  },
+
+  async getWorkspace(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/workspaces/current`);
+    return parseJsonOrThrow(res, 'Failed to load workspace settings');
+  },
+
+  async updateWorkspace(updates: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/workspaces/current`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    return parseJsonOrThrow(res, 'Failed to update workspace');
+  },
+
+  async getWorkspaceMembers(): Promise<{ members: any[] }> {
+    const res = await authFetch(`${API_BASE}/workspaces/members`);
+    return parseJsonOrThrow(res, 'Failed to fetch workspace members');
+  },
+
+  async inviteMember(payload: { email: string; full_name?: string; role: string }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/workspaces/members/invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to invite member');
+  },
+
+  async getApiKeys(): Promise<{ api_keys: any[] }> {
+    const res = await authFetch(`${API_BASE}/workspaces/api-keys`);
+    return parseJsonOrThrow(res, 'Failed to fetch API keys');
+  },
+
+  async createApiKey(name: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/workspaces/api-keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    });
+    return parseJsonOrThrow(res, 'Failed to create API key');
+  },
+
+  async getNotifications(): Promise<{ notifications: any[]; unread_count: number }> {
+    const res = await authFetch(`${API_BASE}/notifications`);
+    return parseJsonOrThrow(res, 'Failed to fetch notifications');
+  },
+
+  async markAllNotificationsRead(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/notifications/read-all`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to mark notifications read');
+  },
+
+  async getAdminOverview(): Promise<any> {
+    const res = await authFetch(`${API_BASE}/admin/overview`);
+    return parseJsonOrThrow(res, 'Failed to load Super Admin overview');
+  },
+
+  async getAdminWorkspaces(): Promise<{ workspaces: any[] }> {
+    const res = await authFetch(`${API_BASE}/admin/workspaces`);
+    return parseJsonOrThrow(res, 'Failed to load workspaces');
+  },
+
+  async toggleWorkspaceSuspension(tenantId: string, suspend: boolean): Promise<any> {
+    const action = suspend ? 'suspend' : 'activate';
+    const res = await authFetch(`${API_BASE}/admin/workspaces/${tenantId}/${action}`, { method: 'POST' });
+    return parseJsonOrThrow(res, `Failed to ${action} workspace`);
+  },
+
+  async updateAdminTariffs(tariffs: any): Promise<any> {
+    const res = await authFetch(`${API_BASE}/admin/settings/tariffs`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tariffs),
+    });
+    return parseJsonOrThrow(res, 'Failed to update tariffs');
+  },
+
+  async getAdminFeatureFlags(): Promise<{ feature_flags: any[] }> {
+    const res = await authFetch(`${API_BASE}/admin/feature-flags`);
+    return parseJsonOrThrow(res, 'Failed to load feature flags');
+  },
+
+  async toggleFeatureFlag(key: string, enabled: boolean): Promise<any> {
+    const res = await authFetch(`${API_BASE}/admin/feature-flags/${key}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    });
+    return parseJsonOrThrow(res, 'Failed to update feature flag');
   },
 
   async getReadiness(): Promise<ReadinessStatus> {
     const res = await fetch(`${API_BASE}/readiness`);
-    if (!res.ok) throw new Error('Failed to fetch readiness status');
-    return res.json();
+    return parseJsonOrThrow(res, 'Failed to fetch readiness status');
+  },
+
+  async verifyPhoneNumbers(provider: string = 'exotel'): Promise<{ provider: string; verified: boolean; numbers: string[]; error?: string }> {
+    const res = await authFetch(`${API_BASE}/phone-numbers/verify?provider=${encodeURIComponent(provider)}`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to verify carrier numbers');
+  },
+
+  async getDispositions(): Promise<{ tenant_id: string; mapping: Record<string, string> }> {
+    const res = await authFetch(`${API_BASE}/compliance/dispositions`);
+    return parseJsonOrThrow(res, 'Failed to load disposition mapping');
+  },
+
+  async updateDispositions(mapping: Record<string, string>): Promise<{ status: string; mapping: Record<string, string> }> {
+    const res = await authFetch(`${API_BASE}/compliance/dispositions`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mapping }),
+    });
+    return parseJsonOrThrow(res, 'Failed to save disposition mapping');
+  },
+
+  async transferCall(callId: string, targetPhone: string, reason?: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/calls/${callId}/transfer`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_phone: targetPhone, reason }),
+    });
+    return parseJsonOrThrow(res, 'Failed to initiate warm call transfer');
   }
 };

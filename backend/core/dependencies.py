@@ -1,17 +1,27 @@
 """
-TRIVAANA AI: Authentication & Multi-Tenant Dependency Guards
-Enforces server-side authentication, role authorization, and tenant scoping.
+TRIVAANA AI: Authentication, RBAC & Multi-Tenant Dependency Guards
+Enforces server-side authentication, role authorization, workspace suspension checks, and tenant scoping.
 """
 
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Iterable
+from datetime import datetime, timezone
 import sqlite3
 from core.security import decode_access_token, hash_api_key
 from database.connection import get_db
-from database.seed import DEMO_TENANT_ID
 
 security_bearer = HTTPBearer(auto_error=False)
+
+ROLE_HIERARCHY = {
+    "owner": 5,
+    "admin": 4,
+    "manager": 3,
+    "operator": 2,
+    "agent": 2,
+    "viewer": 1,
+}
+
 
 def get_current_user(
     auth: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
@@ -20,7 +30,6 @@ def get_current_user(
 ) -> Dict[str, Any]:
     """
     Authenticate user via Bearer JWT token or X-API-Key header.
-    In development/demo mode without token, falls back safely to demo admin user.
     """
     cur = db.cursor()
 
@@ -40,9 +49,32 @@ def get_current_user(
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account not found")
         return dict(user)
 
-    # 2. Check X-API-Key header
+    # 2. Check X-API-Key header (check api_keys table first, then legacy tenants.api_key_hash)
     if x_api_key:
         key_hash = hash_api_key(x_api_key)
+        cur.execute(
+            "SELECT * FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL",
+            (key_hash,)
+        )
+        api_key_row = cur.fetchone()
+        if api_key_row:
+            cur.execute("SELECT * FROM tenants WHERE id = ?", (api_key_row["tenant_id"],))
+            tenant = cur.fetchone()
+            if tenant:
+                cur.execute(
+                    "UPDATE api_keys SET last_used_at = ? WHERE id = ?",
+                    (datetime.now(timezone.utc).isoformat(), api_key_row["id"])
+                )
+                db.commit()
+                return {
+                    "id": f"api_key_{api_key_row['id']}",
+                    "tenant_id": tenant["id"],
+                    "email": f"api@{tenant['id']}.trivaana.internal",
+                    "role": "admin",
+                    "is_super_admin": 0,
+                    "full_name": f"API Key ({api_key_row['name']})"
+                }
+
         cur.execute("SELECT * FROM tenants WHERE api_key_hash = ?", (key_hash,))
         tenant = cur.fetchone()
         if tenant:
@@ -51,26 +83,23 @@ def get_current_user(
                 "tenant_id": tenant["id"],
                 "email": f"api@{tenant['id']}.trivaana.internal",
                 "role": "admin",
+                "is_super_admin": 0,
                 "full_name": f"API Agent ({tenant['name']})"
             }
 
-    # 3. Development / Demo Fallback (Isolated Demo Workspace)
-    cur.execute("SELECT * FROM users WHERE id = 'user_demo_admin'")
-    demo_user = cur.fetchone()
-    if demo_user:
-        return dict(demo_user)
-
+    # 3. No valid authentication provided -> Raise 401
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Authentication required",
+        detail="Authentication required. Provide Bearer JWT token or X-API-Key header.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
 
 def get_current_tenant(
     current_user: Dict[str, Any] = Depends(get_current_user),
     db: sqlite3.Connection = Depends(get_db)
 ) -> Dict[str, Any]:
-    """Retrieve verified tenant object for the authenticated user."""
+    """Retrieve verified tenant object for the authenticated user and enforce suspension status."""
     tenant_id = current_user.get("tenant_id")
     if not tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tenant associated with user")
@@ -81,13 +110,47 @@ def get_current_tenant(
     if not tenant:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant workspace not found")
 
-    return dict(tenant)
-
-def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
-    """Ensure authenticated user has admin role."""
-    if current_user.get("role") != "admin":
+    tenant_dict = dict(tenant)
+    if tenant_dict.get("status") == "suspended":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operation requires administrator privileges"
+            detail="This workspace has been suspended. Contact platform support."
+        )
+
+    return tenant_dict
+
+
+def require_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Ensure authenticated user has owner or admin role."""
+    if current_user.get("role") not in ("owner", "admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Operation requires workspace owner or administrator privileges"
+        )
+    return current_user
+
+
+def require_roles(allowed_roles: Iterable[str]):
+    """Dependency factory enforcing workspace RBAC roles."""
+    allowed = set(allowed_roles)
+
+    def _checker(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+        user_role = (current_user.get("role") or "viewer").lower()
+        if user_role not in allowed and not current_user.get("is_super_admin"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions. Required role: {', '.join(sorted(allowed))}"
+            )
+        return current_user
+
+    return _checker
+
+
+def require_super_admin(current_user: Dict[str, Any] = Depends(get_current_user)) -> Dict[str, Any]:
+    """Ensure authenticated user has platform Super Admin privileges."""
+    if not current_user.get("is_super_admin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform Super Admin access required"
         )
     return current_user

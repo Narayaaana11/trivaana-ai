@@ -2,17 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import {
   Zap,
-  PhoneCall,
-  CheckCircle2,
-  Clock,
-  Send,
   MessageSquare,
-  Sparkles,
-  ArrowRight,
   ShieldCheck,
   RefreshCw,
 } from 'lucide-react';
-import BRAND from '@/lib/brand';
 
 interface SpeedToLeadPanelProps {
   onCallCompleted?: () => void;

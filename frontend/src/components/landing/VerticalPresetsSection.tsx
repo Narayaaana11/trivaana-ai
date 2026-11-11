@@ -100,7 +100,7 @@ export const VerticalPresetsSection: React.FC<VerticalPresetsSectionProps> = ({
         <div className="text-center max-w-3xl mx-auto mb-16">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-100/80 text-orange-800 text-xs font-semibold mb-4 border border-orange-200">
             <Sparkles className="w-3.5 h-3.5 text-orange-600" />
-            <span>Turnkey Outpero-Grade Industry Presets</span>
+            <span>Turnkey Trivaana Industry Presets</span>
           </div>
           <h2 className="text-3xl sm:text-4xl md:text-5xl font-extrabold text-slate-950 tracking-tight">
             Battle-Tested Call Scripts for <br />

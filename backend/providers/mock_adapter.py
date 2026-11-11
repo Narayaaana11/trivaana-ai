@@ -65,7 +65,7 @@ class MockTelephonyProvider(BaseTelephonyProvider):
         )
         status = payload.get("status", "completed")
         duration = int(payload.get("duration", 60))
-        recording = payload.get("recording_url", f"https://cdn.trivaana.ai/recordings/{call_id}.mp3")
+        recording = payload.get("recording_url", f"sandbox://recordings/{call_id}.mp3")
 
         return CallStatusEvent(
             provider="mock",
