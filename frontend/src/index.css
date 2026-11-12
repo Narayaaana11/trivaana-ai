@@ -141,6 +141,47 @@ body {
   animation: rb-star-orbit 5s linear infinite;
 }
 
+/* Magic UI Border Beam & Marquee Keyframes */
+@keyframes border-beam {
+  100% {
+    offset-distance: 100%;
+  }
+}
+
+@keyframes marquee-x {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-100% - var(--gap, 1rem)));
+  }
+}
+
+@keyframes marquee-y {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(calc(-100% - var(--gap, 1rem)));
+  }
+}
+
+.animate-border-beam {
+  animation: border-beam calc(var(--duration, 10) * 1s) infinite linear;
+}
+
+.animate-marquee-x {
+  animation: marquee-x var(--duration, 35s) linear infinite;
+}
+
+.animate-marquee-x-reverse {
+  animation: marquee-x var(--duration, 35s) linear infinite reverse;
+}
+
+.group:hover .group-hover\:paused {
+  animation-play-state: paused;
+}
+
 /* Clean Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

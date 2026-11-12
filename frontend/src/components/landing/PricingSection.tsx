@@ -1,5 +1,7 @@
-import React from 'react';
-import { SpotlightCard, GlareHover, WarmTooltip } from '@/components/reactbits';
+import React, { useState } from 'react';
+import { SpotlightCard, WarmTooltip } from '@/components/reactbits';
+import { BorderBeam, SlidingNumber } from '@/components/motion';
+import { Tabs } from '@/components/ui';
 import {
   Check,
   ShieldCheck,
@@ -84,10 +86,17 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
   onSelectPlan,
   onEnterDashboard,
 }) => {
+  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
+
+  const getTierPrice = (monthlyStr: string) => {
+    const base = Number(monthlyStr.replace(/,/g, ''));
+    return billingCycle === 'annual' ? Math.round(base * 0.8) : base;
+  };
+
   return (
     <section id="pricing" className="py-24 bg-slate-50/70 border-b border-slate-200/80 relative">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="text-center max-w-3xl mx-auto mb-16">
+        <div className="text-center max-w-3xl mx-auto mb-12">
           <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full bg-orange-100/80 text-orange-800 text-xs font-semibold mb-4 border border-orange-200">
             <CreditCard className="w-3.5 h-3.5 text-orange-600" />
             <span>Zero Hidden Fees • 100% Transparent INR Pricing</span>
@@ -101,6 +110,18 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
           <p className="mt-4 text-base sm:text-lg text-[#525260]">
             Standard Indian voices at ₹6.50/min or Premium neural voices at ₹8.50/min. Unanswered calls cost ₹0, and workspace seats are unlimited.
           </p>
+
+          <div className="mt-7 flex justify-center">
+            <Tabs
+              layoutId="pricingBillingCycle"
+              value={billingCycle}
+              onChange={(val) => setBillingCycle(val as 'monthly' | 'annual')}
+              items={[
+                { id: 'monthly', label: 'Monthly Billing' },
+                { id: 'annual', label: 'Annual Billing', badge: 'Save 20%' },
+              ]}
+            />
+          </div>
         </div>
 
         {/* Outpero-Style Standard vs Premium Talk-Time Transparency Strip */}
@@ -140,15 +161,18 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                   </span>
                 </div>
               )}
-              <GlareHover className="rounded-3xl h-full">
+              <div className="relative rounded-3xl h-full">
                 <SpotlightCard
                   spotlightColor={tier.highlight ? 'rgba(255, 85, 0, 0.16)' : 'rgba(0, 0, 0, 0.04)'}
-                  className={`h-full rounded-3xl p-8 pt-9 flex flex-col justify-between transition-all relative ${
+                  className={`h-full rounded-3xl p-8 pt-9 flex flex-col justify-between transition-all relative overflow-hidden ${
                     tier.highlight
                       ? 'bg-white border-2 border-orange-500 shadow-xl'
                       : 'bg-white border border-slate-200/90 shadow-sm'
                   }`}
                 >
+                {tier.highlight && (
+                  <BorderBeam size={240} duration={11} borderWidth={1.5} colorFrom="#ff5500" colorTo="#fbbf24" />
+                )}
                 <div>
                   <div className="flex justify-between items-start mb-4">
                   <div>
@@ -160,11 +184,14 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                 <div className="my-6 p-4 rounded-2xl bg-slate-50 border border-slate-100">
                   <div className="flex items-baseline gap-1">
                     <span className="text-lg font-bold text-slate-700">₹</span>
-                    <span className="text-4xl sm:text-5xl font-black text-slate-950 font-mono tracking-tight">
-                      {tier.price}
-                    </span>
+                    <SlidingNumber
+                      value={getTierPrice(tier.price)}
+                      className="text-4xl sm:text-5xl font-black text-slate-950 font-mono tracking-tight"
+                    />
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">{tier.billing}</div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {billingCycle === 'annual' ? 'per month (billed annually) + 18% GST' : tier.billing}
+                  </div>
                   <div className="mt-3 pt-3 border-t border-slate-200/80 flex items-center justify-between text-xs font-semibold text-orange-700">
                     <span>Overage Rate:</span>
                     <span className="font-mono bg-orange-100/70 px-2 py-0.5 rounded text-orange-900">
@@ -201,7 +228,7 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                 </button>
               </div>
               </SpotlightCard>
-            </GlareHover>
+            </div>
             </div>
           ))}
         </div>

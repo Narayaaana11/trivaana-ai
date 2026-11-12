@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { TrivaanaLogo } from '@/components/brand/TrivaanaLogo';
 import { Magnet } from '@/components/reactbits';
+import { DropdownPanel } from '@/components/ui';
 import { Play, Menu, X, ArrowRight, ChevronDown, Zap, PhoneForwarded, PhoneIncoming, BookOpen } from 'lucide-react';
 import type { PublicRoute } from './LandingPage';
 
@@ -61,6 +62,8 @@ export const LandingNav: React.FC<LandingNavProps> = ({
           >
             <button
               type="button"
+              aria-expanded={productOpen}
+              aria-haspopup="menu"
               onClick={() => setProductOpen((v) => !v)}
               className={`inline-flex items-center gap-1 hover:text-[#0f0f14] transition-colors cursor-pointer py-2 ${
                 activeRoute === 'instant-leads' || activeRoute === 'campaigns' || activeRoute === 'inbound'
@@ -69,56 +72,60 @@ export const LandingNav: React.FC<LandingNavProps> = ({
               }`}
             >
               <span>Product</span>
-              <ChevronDown className="w-3.5 h-3.5 text-[#8a8a98]" />
+              <ChevronDown className={`w-3.5 h-3.5 text-[#8a8a98] transition-transform duration-200 ${productOpen ? 'rotate-180' : ''}`} />
             </button>
-            {productOpen && (
-              <div className="absolute left-0 top-full w-68 rounded-2xl bg-white border border-[#e4e4e9] shadow-xl p-2 space-y-1 z-50">
-                <a
-                  href="/product/instant-leads"
-                  onClick={(e) => handleRouteClick(e, 'instant-leads')}
-                  className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
-                >
-                  <Zap className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
-                  <div>
-                    <div className="text-xs font-bold text-[#0f0f14]">Instant Leads (&lt;30s)</div>
-                    <div className="text-[11px] text-[#6e6e7e]">13 lead connectors &amp; sub-30s callback</div>
-                  </div>
-                </a>
-                <a
-                  href="/product/campaigns"
-                  onClick={(e) => handleRouteClick(e, 'campaigns')}
-                  className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
-                >
-                  <PhoneForwarded className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
-                  <div>
-                    <div className="text-xs font-bold text-[#0f0f14]">Bulk Campaigns</div>
-                    <div className="text-[11px] text-[#6e6e7e]">Parallel CSV dialing &amp; outcome tagging</div>
-                  </div>
-                </a>
-                <a
-                  href="/product/inbound"
-                  onClick={(e) => handleRouteClick(e, 'inbound')}
-                  className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
-                >
-                  <PhoneIncoming className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
-                  <div>
-                    <div className="text-xs font-bold text-[#0f0f14]">24×7 Incoming Calls</div>
-                    <div className="text-[11px] text-[#6e6e7e]">AI reception, bookings &amp; warm transfer</div>
-                  </div>
-                </a>
-                <a
-                  href="/docs"
-                  onClick={(e) => handleRouteClick(e, 'docs')}
-                  className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
-                >
-                  <BookOpen className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
-                  <div>
-                    <div className="text-xs font-bold text-[#0f0f14]">API &amp; Webhooks Docs</div>
-                    <div className="text-[11px] text-[#6e6e7e]">REST reference, TRAI DND &amp; intake guides</div>
-                  </div>
-                </a>
-              </div>
-            )}
+            <DropdownPanel
+              open={productOpen}
+              onClose={() => setProductOpen(false)}
+              align="left"
+              widthClass="w-72"
+              className="mt-0.5 space-y-1 shadow-xl"
+            >
+              <a
+                href="/product/instant-leads"
+                onClick={(e) => handleRouteClick(e, 'instant-leads')}
+                className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
+              >
+                <Zap className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-[#0f0f14]">Instant Leads (&lt;30s)</div>
+                  <div className="text-[11px] text-[#6e6e7e]">13 lead connectors &amp; sub-30s callback</div>
+                </div>
+              </a>
+              <a
+                href="/product/campaigns"
+                onClick={(e) => handleRouteClick(e, 'campaigns')}
+                className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
+              >
+                <PhoneForwarded className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-[#0f0f14]">Bulk Campaigns</div>
+                  <div className="text-[11px] text-[#6e6e7e]">Parallel CSV dialing &amp; outcome tagging</div>
+                </div>
+              </a>
+              <a
+                href="/product/inbound"
+                onClick={(e) => handleRouteClick(e, 'inbound')}
+                className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
+              >
+                <PhoneIncoming className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-[#0f0f14]">24×7 Incoming Calls</div>
+                  <div className="text-[11px] text-[#6e6e7e]">AI reception, bookings &amp; warm transfer</div>
+                </div>
+              </a>
+              <a
+                href="/docs"
+                onClick={(e) => handleRouteClick(e, 'docs')}
+                className="flex items-start gap-2.5 p-2.5 rounded-xl hover:bg-[#f6f6f8] transition-colors"
+              >
+                <BookOpen className="w-4 h-4 text-[#ff5500] shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-bold text-[#0f0f14]">API &amp; Webhooks Docs</div>
+                  <div className="text-[11px] text-[#6e6e7e]">REST reference, TRAI DND &amp; intake guides</div>
+                </div>
+              </a>
+            </DropdownPanel>
           </div>
 
           {navRoutes.map((link) => (

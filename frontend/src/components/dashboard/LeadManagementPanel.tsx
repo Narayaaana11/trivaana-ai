@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Lead } from '@/types/trivaana';
 import { RubberSegment, SwipeToast } from '@/components/reactbits';
+import { Dialog } from '@/components/ui';
 import {
   Users,
   Upload,
@@ -517,114 +518,99 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
       </div>
 
       {/* Add Contact Modal */}
-      {showAddModal && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleCreateLead} className="bg-white rounded-3xl max-w-md w-full p-6 space-y-3 text-xs shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-base font-black text-slate-900">Add Contact</h3>
-              <button type="button" onClick={() => setShowAddModal(false)} className="text-slate-500 cursor-pointer">Close</button>
-            </div>
-            <input required placeholder="Full Name" value={newLead.name} onChange={(e) => setNewLead({ ...newLead, name: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
-            <input required placeholder="Phone (+919848012345)" value={newLead.phone} onChange={(e) => setNewLead({ ...newLead, phone: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
-            <input placeholder="Email (optional)" value={newLead.email} onChange={(e) => setNewLead({ ...newLead, email: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
-            <div className="grid grid-cols-2 gap-2">
-              <input placeholder="City" value={newLead.city} onChange={(e) => setNewLead({ ...newLead, city: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
-              <input placeholder="Vertical" value={newLead.vertical} onChange={(e) => setNewLead({ ...newLead, vertical: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
-            </div>
-            <textarea rows={2} placeholder="Notes" value={newLead.notes} onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-orange-600 text-white font-bold cursor-pointer">Save Contact</button>
-          </form>
-        </div>
-      )}
+      <Dialog open={showAddModal} onClose={() => setShowAddModal(false)} title="Add Contact" maxWidthClass="max-w-md">
+        <form onSubmit={handleCreateLead} className="space-y-3 text-xs">
+          <input required placeholder="Full Name" value={newLead.name} onChange={(e) => setNewLead({ ...newLead, name: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+          <input required placeholder="Phone (+919848012345)" value={newLead.phone} onChange={(e) => setNewLead({ ...newLead, phone: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+          <input placeholder="Email (optional)" value={newLead.email} onChange={(e) => setNewLead({ ...newLead, email: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+          <div className="grid grid-cols-2 gap-2">
+            <input placeholder="City" value={newLead.city} onChange={(e) => setNewLead({ ...newLead, city: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
+            <input placeholder="Vertical" value={newLead.vertical} onChange={(e) => setNewLead({ ...newLead, vertical: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
+          </div>
+          <textarea rows={2} placeholder="Notes" value={newLead.notes} onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+          <button type="submit" className="w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold cursor-pointer">Save Contact</button>
+        </form>
+      </Dialog>
 
       {/* Paste Contacts Modal */}
-      {showPasteModal && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
-          <form onSubmit={handlePasteImport} className="bg-white rounded-3xl max-w-md w-full p-6 space-y-3 text-xs shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-base font-black text-slate-900">Paste Contacts (Name, Phone, City)</h3>
-              <button type="button" onClick={() => setShowPasteModal(false)} className="text-slate-500 cursor-pointer">Close</button>
-            </div>
-            <textarea
-              required
-              rows={6}
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-              placeholder={"Rahul,+919848011111,Hyderabad\nPriya,+919848022222,Bengaluru"}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
-            />
-            <label className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 cursor-pointer">
-              <input type="checkbox" name="consent_confirmed" className="mt-0.5" />
-              <span>I confirm these contacts gave prior opt-in consent for automated outreach (TRAI compliance).</span>
-            </label>
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-slate-900 text-white font-bold cursor-pointer">Import Pasted Contacts</button>
-          </form>
-        </div>
-      )}
+      <Dialog open={showPasteModal} onClose={() => setShowPasteModal(false)} title="Paste Contacts (Name, Phone, City)" maxWidthClass="max-w-md">
+        <form onSubmit={handlePasteImport} className="space-y-3 text-xs">
+          <textarea
+            required
+            rows={6}
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            placeholder={"Rahul,+919848011111,Hyderabad\nPriya,+919848022222,Bengaluru"}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
+          />
+          <label className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 cursor-pointer">
+            <input type="checkbox" name="consent_confirmed" className="mt-0.5" />
+            <span>I confirm these contacts gave prior opt-in consent for automated outreach (TRAI compliance).</span>
+          </label>
+          <button type="submit" className="w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-950 text-white font-bold cursor-pointer">Import Pasted Contacts</button>
+        </form>
+      </Dialog>
 
       {/* CSV Column Mapper Modal */}
-      {csvPendingFile && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
-          <form onSubmit={confirmCsvUpload} className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 text-xs shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3">
-              <div>
-                <h3 className="text-base font-black text-slate-900">Map CSV Columns</h3>
-                <p className="text-[11px] text-slate-500">{csvPendingFile.name} • {csvHeaders.length} column(s) detected</p>
-              </div>
-              <button type="button" onClick={() => setCsvPendingFile(null)} className="text-slate-500 cursor-pointer">Close</button>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {(['phone', 'name', 'email', 'city', 'vertical', 'notes'] as const).map((field) => (
-                <label key={field} className="space-y-1">
-                  <span className="font-bold text-slate-700 capitalize">{field} {field === 'phone' ? '*' : ''}</span>
-                  <select
-                    required={field === 'phone'}
-                    value={csvMapping[field] || ''}
-                    onChange={(e) => setCsvMapping((prev) => ({ ...prev, [field]: e.target.value }))}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
-                  >
-                    <option value="">-- Skip / Auto --</option>
-                    {csvHeaders.map((h) => (
-                      <option key={h} value={h}>{h}</option>
-                    ))}
-                  </select>
-                </label>
-              ))}
-            </div>
-            {csvPreviewRows.length > 0 && (
-              <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 overflow-x-auto">
-                <div className="text-[10px] font-bold uppercase text-slate-500 mb-1.5">Sample Preview</div>
-                <table className="w-full text-[11px]">
-                  <thead>
-                    <tr className="text-left text-slate-500">
-                      {csvHeaders.slice(0, 5).map((h) => <th key={h} className="pr-3 pb-1">{h}</th>)}
+      <Dialog
+        open={Boolean(csvPendingFile)}
+        onClose={() => setCsvPendingFile(null)}
+        title="Map CSV Columns"
+        description={csvPendingFile ? `${csvPendingFile.name} • ${csvHeaders.length} column(s) detected` : undefined}
+        maxWidthClass="max-w-lg"
+      >
+        <form onSubmit={confirmCsvUpload} className="space-y-4 text-xs">
+          <div className="grid grid-cols-2 gap-3">
+            {(['phone', 'name', 'email', 'city', 'vertical', 'notes'] as const).map((field) => (
+              <label key={field} className="space-y-1">
+                <span className="font-bold text-slate-700 capitalize">{field} {field === 'phone' ? '*' : ''}</span>
+                <select
+                  required={field === 'phone'}
+                  value={csvMapping[field] || ''}
+                  onChange={(e) => setCsvMapping((prev) => ({ ...prev, [field]: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+                >
+                  <option value="">-- Skip / Auto --</option>
+                  {csvHeaders.map((h) => (
+                    <option key={h} value={h}>{h}</option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          {csvPreviewRows.length > 0 && (
+            <div className="rounded-2xl bg-slate-50 border border-slate-200 p-3 overflow-x-auto">
+              <div className="text-[10px] font-bold uppercase text-slate-500 mb-1.5">Sample Preview</div>
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="text-left text-slate-500">
+                    {csvHeaders.slice(0, 5).map((h) => <th key={h} className="pr-3 pb-1">{h}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {csvPreviewRows.map((row, idx) => (
+                    <tr key={idx} className="border-t border-slate-200/70">
+                      {row.slice(0, 5).map((cell, cidx) => <td key={cidx} className="pr-3 py-1 text-slate-700">{cell}</td>)}
                     </tr>
-                  </thead>
-                  <tbody>
-                    {csvPreviewRows.map((row, idx) => (
-                      <tr key={idx} className="border-t border-slate-200/70">
-                        {row.slice(0, 5).map((cell, cidx) => <td key={cidx} className="pr-3 py-1 text-slate-700">{cell}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-            <label className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 cursor-pointer">
-              <input type="checkbox" name="consent_confirmed" className="mt-0.5" />
-              <span>I confirm these CSV contacts gave prior opt-in consent for outreach; unchecked rows remain pending consent verification.</span>
-            </label>
-            <div className="flex gap-2">
-              <button type="button" onClick={() => setCsvPendingFile(null)} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold cursor-pointer">
-                Cancel
-              </button>
-              <button type="submit" disabled={isUploadingCsv} className="flex-1 py-2.5 rounded-xl bg-orange-600 text-white font-bold cursor-pointer">
-                {isUploadingCsv ? 'Importing...' : 'Import Mapped CSV'}
-              </button>
+                  ))}
+                </tbody>
+              </table>
             </div>
-          </form>
-        </div>
-      )}
+          )}
+          <label className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 cursor-pointer">
+            <input type="checkbox" name="consent_confirmed" className="mt-0.5" />
+            <span>I confirm these CSV contacts gave prior opt-in consent for outreach; unchecked rows remain pending consent verification.</span>
+          </label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setCsvPendingFile(null)} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold cursor-pointer">
+              Cancel
+            </button>
+            <button type="submit" disabled={isUploadingCsv} className="flex-1 py-2.5 rounded-xl bg-orange-600 text-white font-bold cursor-pointer">
+              {isUploadingCsv ? 'Importing...' : 'Import Mapped CSV'}
+            </button>
+          </div>
+        </form>
+      </Dialog>
       {/* Contact Detail Drawer */}
       {(selectedLeadDetail || detailLoading) && (() => {
         const detailLead = selectedLeadDetail?.lead || selectedLeadDetail;

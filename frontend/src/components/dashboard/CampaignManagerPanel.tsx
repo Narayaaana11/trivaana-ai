@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Agent, CampaignItem, ContactListItem } from '@/types/trivaana';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { EmptyState, Dialog } from '@/components/ui';
 import { ElectricBorder, SloshGauge } from '@/components/reactbits';
 import BRAND from '@/lib/brand';
 import {
@@ -587,18 +587,14 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
         </div>
       )}
 
-      {showListsModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/45 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 border border-slate-200 shadow-xl space-y-5 max-h-[88vh] overflow-y-auto text-xs">
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div>
-                <h2 className="text-base font-black text-slate-900">Contact & Suppression Lists</h2>
-                <p className="text-slate-500">Create reusable audience lists or suppression/exclusion lists for campaigns.</p>
-              </div>
-              <button onClick={() => setShowListsModal(false)} aria-label="Close contact lists modal" className="p-1.5 rounded-xl hover:bg-slate-100 cursor-pointer">
-                <X className="w-4 h-4 text-slate-500" />
-              </button>
-            </div>
+      <Dialog
+        open={showListsModal}
+        onClose={() => setShowListsModal(false)}
+        title="Contact & Suppression Lists"
+        description="Create reusable audience lists or suppression/exclusion lists for campaigns."
+        maxWidthClass="max-w-2xl"
+      >
+        <div className="space-y-5 max-h-[75vh] overflow-y-auto text-xs pr-1">
 
             <form
               onSubmit={async (e) => {
@@ -679,9 +675,8 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
                 ))
               )}
             </div>
-          </div>
         </div>
-      )}
+      </Dialog>
     </div>
   );
 };

@@ -4,6 +4,7 @@ import { Agent, VoiceProfile, KnowledgeDocument, CallLog } from '@/types/trivaan
 import BRAND from '@/lib/brand';
 import { AgentWorkflowCanvas } from './AgentWorkflowCanvas';
 import { ThreadsBackground } from '@/components/reactbits';
+import { Dialog } from '@/components/ui';
 import {
   Bot,
   Sparkles,
@@ -1504,13 +1505,16 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
       </div>
 
       {/* Create AI Employee Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50 overflow-y-auto">
-          <form onSubmit={handleCreateEmployee} className="bg-white rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl my-8">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-base font-black text-slate-900">Create New AI Employee</h3>
-              <button type="button" onClick={() => { stopAuditionAudio(); setShowCreateModal(false); }} className="text-xs text-slate-500 cursor-pointer">Cancel</button>
-            </div>
+      <Dialog
+        open={showCreateModal}
+        onClose={() => {
+          stopAuditionAudio();
+          setShowCreateModal(false);
+        }}
+        title="Create New AI Employee"
+        maxWidthClass="max-w-2xl"
+      >
+        <form onSubmit={handleCreateEmployee} className="space-y-4 max-h-[78vh] overflow-y-auto pr-1">
             <div className="space-y-3 text-xs">
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Employee Name</label>
@@ -1727,9 +1731,8 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
             >
               {isGenerating ? 'Generating Configuration...' : 'Generate AI Employee & Save Draft'}
             </button>
-          </form>
-        </div>
-      )}
+        </form>
+      </Dialog>
     </div>
   );
 };

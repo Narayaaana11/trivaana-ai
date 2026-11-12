@@ -29,6 +29,8 @@ const StaffPortal = lazy(() =>
 import { LiveCallSimulatorModal } from './LiveCallSimulatorModal';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Tenant, AnalyticsStats, CallLog } from '@/types/trivaana';
+import { TransitionPanel } from '@/components/motion';
+import { DashboardSkeleton, Dialog, DropdownPanel } from '@/components/ui';
 import {
   BellToggle,
   CallChip,
@@ -296,6 +298,12 @@ export const MissionControl: React.FC<MissionControlProps> = ({
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault();
         setShowCommandPalette((v) => !v);
+      } else if (e.key === 'Escape') {
+        setShowCommandPalette(false);
+        setShowNotifications(false);
+        setShowActivityPopover(false);
+        setShowHelpPopover(false);
+        setShowUserMenu(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -390,21 +398,24 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                     </span>
                   )}
                 </button>
-                {showActivityPopover && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl border border-[#e4e4e9] shadow-2xl p-4 z-50 text-xs space-y-2">
-                    <div className="font-bold text-[#0f0f14] border-b border-[#e4e4e9] pb-2 flex items-center justify-between">
-                      <span>Live Calling Activity</span>
-                      <span className="text-[10px] font-normal text-[#8a8a98]">Real-time lines</span>
-                    </div>
-                    {activeCalls.length === 0 ? (
-                      <div className="py-4 text-center text-[#8a8a98]">No active calls in progress right now.</div>
-                    ) : (
-                      activeCalls.map((ac) => (
-                        <CallChip key={ac.id} name={ac.contact_name} status={ac.status} />
-                      ))
-                    )}
+                <DropdownPanel
+                  open={showActivityPopover}
+                  onClose={() => setShowActivityPopover(false)}
+                  widthClass="w-80"
+                  className="p-4 space-y-2"
+                >
+                  <div className="font-bold text-[#0f0f14] border-b border-[#e4e4e9] pb-2 flex items-center justify-between">
+                    <span>Live Calling Activity</span>
+                    <span className="text-[10px] font-normal text-[#8a8a98]">Real-time lines</span>
                   </div>
-                )}
+                  {activeCalls.length === 0 ? (
+                    <div className="py-4 text-center text-[#8a8a98]">No active calls in progress right now.</div>
+                  ) : (
+                    activeCalls.map((ac) => (
+                      <CallChip key={ac.id} name={ac.contact_name} status={ac.status} />
+                    ))
+                  )}
+                </DropdownPanel>
               </div>
 
               {/* Take the Tour */}
@@ -434,51 +445,54 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                 >
                   <HelpCircle className="w-4 h-4" />
                 </button>
-                {showHelpPopover && (
-                  <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl border border-[#e4e4e9] shadow-2xl p-4 z-50 text-xs space-y-2.5">
-                    <div className="font-bold text-[#0f0f14] border-b border-[#e4e4e9] pb-2">Help & Shortcuts</div>
-                    <button
-                      onClick={() => {
-                        setCurrentTab('developers');
-                        setShowHelpPopover(false);
-                      }}
-                      className="w-full text-left p-2 rounded-xl hover:bg-[#f6f6f8] font-semibold text-[#0f0f14] flex justify-between cursor-pointer"
-                    >
-                      <span>API Quickstart & Webhooks</span>
-                      <ArrowRight className="w-3.5 h-3.5 text-[#ff5500]" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowTourModal(true);
-                        setShowHelpPopover(false);
-                      }}
-                      className="w-full text-left p-2 rounded-xl hover:bg-[#f6f6f8] font-semibold text-[#0f0f14] flex justify-between cursor-pointer"
-                    >
-                      <span>Interactive Product Tour</span>
-                      <Compass className="w-3.5 h-3.5 text-[#ff5500]" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setIsSimulatorOpen(true);
-                        setShowHelpPopover(false);
-                      }}
-                      className="w-full text-left p-2 rounded-xl hover:bg-[#f6f6f8] font-semibold text-[#0f0f14] flex justify-between cursor-pointer"
-                    >
-                      <span>Launch Voice Test Sandbox</span>
-                      <LifeBuoy className="w-3.5 h-3.5 text-[#ff5500]" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setShowUiStudio(true);
-                        setShowHelpPopover(false);
-                      }}
-                      className="w-full text-left p-2 rounded-xl bg-[#fff7ed] hover:bg-[#ffedd5] border border-[#fed7aa] font-bold text-[#c2410c] flex justify-between cursor-pointer"
-                    >
-                      <span>ReactBits UI Studio (58+)</span>
-                      <Sparkles className="w-3.5 h-3.5 text-[#ff5500]" />
-                    </button>
-                  </div>
-                )}
+                <DropdownPanel
+                  open={showHelpPopover}
+                  onClose={() => setShowHelpPopover(false)}
+                  widthClass="w-72"
+                  className="p-4 space-y-2.5"
+                >
+                  <div className="font-bold text-[#0f0f14] border-b border-[#e4e4e9] pb-2">Help &amp; Shortcuts</div>
+                  <button
+                    onClick={() => {
+                      setCurrentTab('developers');
+                      setShowHelpPopover(false);
+                    }}
+                    className="w-full text-left p-2 rounded-xl hover:bg-[#f6f6f8] font-semibold text-[#0f0f14] flex justify-between cursor-pointer"
+                  >
+                    <span>API Quickstart &amp; Webhooks</span>
+                    <ArrowRight className="w-3.5 h-3.5 text-[#ff5500]" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowTourModal(true);
+                      setShowHelpPopover(false);
+                    }}
+                    className="w-full text-left p-2 rounded-xl hover:bg-[#f6f6f8] font-semibold text-[#0f0f14] flex justify-between cursor-pointer"
+                  >
+                    <span>Interactive Product Tour</span>
+                    <Compass className="w-3.5 h-3.5 text-[#ff5500]" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setIsSimulatorOpen(true);
+                      setShowHelpPopover(false);
+                    }}
+                    className="w-full text-left p-2 rounded-xl hover:bg-[#f6f6f8] font-semibold text-[#0f0f14] flex justify-between cursor-pointer"
+                  >
+                    <span>Launch Voice Test Sandbox</span>
+                    <LifeBuoy className="w-3.5 h-3.5 text-[#ff5500]" />
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowUiStudio(true);
+                      setShowHelpPopover(false);
+                    }}
+                    className="w-full text-left p-2 rounded-xl bg-[#fff7ed] hover:bg-[#ffedd5] border border-[#fed7aa] font-bold text-[#c2410c] flex justify-between cursor-pointer"
+                  >
+                    <span>ReactBits UI Studio (58+)</span>
+                    <Sparkles className="w-3.5 h-3.5 text-[#ff5500]" />
+                  </button>
+                </DropdownPanel>
               </div>
 
               {/* Light / Dark Theme Toggle */}
@@ -502,41 +516,44 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                     setShowUserMenu(false);
                   }}
                 />
-                {showNotifications && (
-                  <div className="absolute right-0 mt-2 w-80 bg-white rounded-2xl border border-[#e4e4e9] shadow-2xl p-4 z-50 space-y-2 text-xs">
-                    <div className="flex justify-between items-center border-b border-[#e4e4e9] pb-2">
-                      <span className="font-bold text-[#0f0f14]">Notifications</span>
-                      <button
-                        onClick={async () => {
-                          await trivaanaApi.markAllNotificationsRead();
-                          refreshAllData();
-                        }}
-                        className="text-[#ff5500] font-semibold cursor-pointer"
-                      >
-                        Mark all read
-                      </button>
-                    </div>
-                    <div className="max-h-60 overflow-y-auto space-y-2">
-                      {notifications.length === 0 ? (
-                        <div className="py-4 text-center text-[#8a8a98]">No notifications</div>
-                      ) : (
-                        notifications.slice(0, 8).map((n) => (
-                          <div
-                            key={n.id}
-                            className={`p-2.5 rounded-xl border ${
-                              n.is_read
-                                ? 'bg-[#f6f6f8] border-[#e4e4e9]'
-                                : 'bg-[#fff7ed] border-[#fed7aa]'
-                            }`}
-                          >
-                            <div className="font-bold text-[#0f0f14]">{n.title}</div>
-                            <div className="text-[11px] text-[#525260]">{n.message}</div>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                <DropdownPanel
+                  open={showNotifications}
+                  onClose={() => setShowNotifications(false)}
+                  widthClass="w-80"
+                  className="p-4 space-y-2"
+                >
+                  <div className="flex justify-between items-center border-b border-[#e4e4e9] pb-2">
+                    <span className="font-bold text-[#0f0f14]">Notifications</span>
+                    <button
+                      onClick={async () => {
+                        await trivaanaApi.markAllNotificationsRead();
+                        refreshAllData();
+                      }}
+                      className="text-[#ff5500] font-semibold cursor-pointer"
+                    >
+                      Mark all read
+                    </button>
                   </div>
-                )}
+                  <div className="max-h-60 overflow-y-auto space-y-2">
+                    {notifications.length === 0 ? (
+                      <div className="py-4 text-center text-[#8a8a98]">No notifications</div>
+                    ) : (
+                      notifications.slice(0, 8).map((n) => (
+                        <div
+                          key={n.id}
+                          className={`p-2.5 rounded-xl border ${
+                            n.is_read
+                              ? 'bg-[#f6f6f8] border-[#e4e4e9]'
+                              : 'bg-[#fff7ed] border-[#fed7aa]'
+                          }`}
+                        >
+                          <div className="font-bold text-[#0f0f14]">{n.title}</div>
+                          <div className="text-[11px] text-[#525260]">{n.message}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </DropdownPanel>
               </div>
 
               {/* Compact Profile Dropdown */}
@@ -556,48 +573,51 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-[#6e6e7e] hidden sm:inline" />
                 </button>
-                {showUserMenu && (
-                  <div className="absolute right-0 mt-2 w-60 bg-white rounded-2xl border border-[#e4e4e9] shadow-2xl p-3 z-50 text-xs space-y-1.5">
-                    <div className="px-2 py-1.5 border-b border-[#e4e4e9]">
-                      <div className="font-bold text-[#0f0f14] truncate">{userProfile?.full_name || 'Demo Admin'}</div>
-                      <div className="text-[11px] text-[#6e6e7e] truncate">{userProfile?.email || 'demo@trivaana.ai'}</div>
-                    </div>
-                    <button
-                      onClick={() => {
-                        setCurrentTab('settings');
-                        setShowUserMenu(false);
-                      }}
-                      className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-[#f6f6f8] font-medium text-[#0f0f14] cursor-pointer"
-                    >
-                      Workspace Settings
-                    </button>
-                    <button
-                      onClick={() => {
-                        setCurrentTab('billing');
-                        setShowUserMenu(false);
-                      }}
-                      className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-[#f6f6f8] font-medium text-[#0f0f14] cursor-pointer"
-                    >
-                      Credits & GST Billing
-                    </button>
-                    <button
-                      onClick={() => {
-                        trivaanaApi.logout();
-                        onExitDashboard();
-                      }}
-                      className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-red-50 font-semibold text-red-600 flex items-center gap-2 cursor-pointer"
-                    >
-                      <LogOut className="w-3.5 h-3.5" /> Sign out
-                    </button>
+                <DropdownPanel
+                  open={showUserMenu}
+                  onClose={() => setShowUserMenu(false)}
+                  widthClass="w-60"
+                  className="p-3 space-y-1.5"
+                >
+                  <div className="px-2 py-1.5 border-b border-[#e4e4e9]">
+                    <div className="font-bold text-[#0f0f14] truncate">{userProfile?.full_name || 'Demo Admin'}</div>
+                    <div className="text-[11px] text-[#6e6e7e] truncate">{userProfile?.email || 'demo@trivaana.ai'}</div>
                   </div>
-                )}
+                  <button
+                    onClick={() => {
+                      setCurrentTab('settings');
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-[#f6f6f8] font-medium text-[#0f0f14] cursor-pointer"
+                  >
+                    Workspace Settings
+                  </button>
+                  <button
+                    onClick={() => {
+                      setCurrentTab('billing');
+                      setShowUserMenu(false);
+                    }}
+                    className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-[#f6f6f8] font-medium text-[#0f0f14] cursor-pointer"
+                  >
+                    Credits &amp; GST Billing
+                  </button>
+                  <button
+                    onClick={() => {
+                      trivaanaApi.logout();
+                      onExitDashboard();
+                    }}
+                    className="w-full text-left px-2.5 py-2 rounded-xl hover:bg-red-50 font-semibold text-red-600 flex items-center gap-2 cursor-pointer"
+                  >
+                    <LogOut className="w-3.5 h-3.5" /> Sign out
+                  </button>
+                </DropdownPanel>
               </div>
             </div>
           </header>
 
           {/* Main Scroll Container with Generous Bottom Padding for Floating Pills */}
           <main className="trivaana-workspace-main flex-1 overflow-y-auto p-4 sm:p-6 bg-[#f6f6f8]/60 relative">
-            <div className="max-w-7xl mx-auto pb-24">
+            <TransitionPanel activeKey={currentTab} className="max-w-7xl mx-auto pb-24">
               {currentTab === 'overview' && (
                 <OverviewPanel
                   stats={stats}
@@ -689,7 +709,7 @@ export const MissionControl: React.FC<MissionControlProps> = ({
               )}
               {currentTab === 'support' && <SupportTicketsPanel />}
               {currentTab === 'staff-portal' && (
-                <Suspense fallback={<div className="p-8 text-xs text-slate-500">Loading Staff Portal...</div>}>
+                <Suspense fallback={<DashboardSkeleton />}>
                   <StaffPortal
                     hasStaffAccess={hasStaffAccess}
                     onExitToCustomer={() => setCurrentTab('overview')}
@@ -697,14 +717,14 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                 </Suspense>
               )}
               {currentTab === 'super-admin' && (
-                <Suspense fallback={<div className="p-8 text-xs text-slate-500">Loading Super Admin...</div>}>
+                <Suspense fallback={<DashboardSkeleton />}>
                   <AdminPortal
                     isSuperAdmin={isSuperAdminUser}
                     onExitToCustomer={() => setCurrentTab('overview')}
                   />
                 </Suspense>
               )}
-            </div>
+            </TransitionPanel>
           </main>
 
           {/* Bottom-Right Floating Dock (Ask Trivaana + Setup Guide + Support) */}
@@ -805,126 +825,119 @@ export const MissionControl: React.FC<MissionControlProps> = ({
       </div>
 
       {/* Guided Interactive Tour Modal */}
-      {showTourModal && (
-        <div
-          className="fixed inset-0 bg-black/55 backdrop-blur-xs flex items-center justify-center p-4 z-50"
-          onClick={() => setShowTourModal(false)}
-        >
-          <div
-            className="bg-white rounded-3xl max-w-md w-full border border-[#e4e4e9] shadow-2xl p-6 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold uppercase tracking-wider text-[#ff5500]">
-                Workspace Tour · Step {tourStep + 1} of {TOUR_STEPS.length}
-              </span>
-              <button onClick={() => setShowTourModal(false)} className="text-[#8a8a98] hover:text-[#0f0f14] cursor-pointer">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <Stepper
-              steps={TOUR_STEPS.map((s) => ({ label: s.title }))}
-              currentStep={tourStep}
-              onStepClick={(idx) => {
-                setTourStep(idx);
-                setCurrentTab(TOUR_STEPS[idx].tab);
+      <Dialog
+        open={showTourModal}
+        onClose={() => setShowTourModal(false)}
+        maxWidthClass="max-w-md"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-[#ff5500]">
+              Workspace Tour · Step {tourStep + 1} of {TOUR_STEPS.length}
+            </span>
+            <button onClick={() => setShowTourModal(false)} aria-label="Close tour" className="text-[#8a8a98] hover:text-[#0f0f14] cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <Stepper
+            steps={TOUR_STEPS.map((s) => ({ label: s.title }))}
+            currentStep={tourStep}
+            onStepClick={(idx) => {
+              setTourStep(idx);
+              setCurrentTab(TOUR_STEPS[idx].tab);
+            }}
+          />
+          <h3 className="font-display text-lg font-extrabold text-[#0f0f14]">
+            {TOUR_STEPS[tourStep].title}
+          </h3>
+          <p className="text-xs text-[#525260] leading-relaxed">{TOUR_STEPS[tourStep].body}</p>
+          <div className="flex items-center justify-between pt-2">
+            <button
+              onClick={() => {
+                setCurrentTab(TOUR_STEPS[tourStep].tab);
+                setShowTourModal(false);
               }}
-            />
-            <h3 className="font-display text-lg font-extrabold text-[#0f0f14]">
-              {TOUR_STEPS[tourStep].title}
-            </h3>
-            <p className="text-xs text-[#525260] leading-relaxed">{TOUR_STEPS[tourStep].body}</p>
-            <div className="flex items-center justify-between pt-2">
-              <button
-                onClick={() => {
-                  setCurrentTab(TOUR_STEPS[tourStep].tab);
-                  setShowTourModal(false);
-                }}
-                className="text-xs font-bold text-[#ff5500] hover:underline cursor-pointer"
-              >
-                Open this section →
-              </button>
-              <div className="flex gap-2">
-                {tourStep > 0 && (
-                  <button
-                    onClick={() => setTourStep((s) => s - 1)}
-                    className="px-3 py-1.5 rounded-xl border border-[#e4e4e9] text-xs font-semibold cursor-pointer"
-                  >
-                    Back
-                  </button>
-                )}
-                {tourStep < TOUR_STEPS.length - 1 ? (
-                  <button
-                    onClick={() => {
-                      const next = tourStep + 1;
-                      setTourStep(next);
-                      setCurrentTab(TOUR_STEPS[next].tab);
-                    }}
-                    className="px-4 py-1.5 rounded-xl bg-[#ff5500] hover:bg-[#ea580c] text-white text-xs font-bold cursor-pointer"
-                  >
-                    Next
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setShowTourModal(false)}
-                    className="px-4 py-1.5 rounded-xl bg-[#0f0f14] text-white text-xs font-bold cursor-pointer"
-                  >
-                    Finish Tour
-                  </button>
-                )}
-              </div>
+              className="text-xs font-bold text-[#ff5500] hover:underline cursor-pointer"
+            >
+              Open this section →
+            </button>
+            <div className="flex gap-2">
+              {tourStep > 0 && (
+                <button
+                  onClick={() => setTourStep((s) => s - 1)}
+                  className="px-3 py-1.5 rounded-xl border border-[#e4e4e9] text-xs font-semibold cursor-pointer"
+                >
+                  Back
+                </button>
+              )}
+              {tourStep < TOUR_STEPS.length - 1 ? (
+                <button
+                  onClick={() => {
+                    const next = tourStep + 1;
+                    setTourStep(next);
+                    setCurrentTab(TOUR_STEPS[next].tab);
+                  }}
+                  className="px-4 py-1.5 rounded-xl bg-[#ff5500] hover:bg-[#ea580c] text-white text-xs font-bold cursor-pointer"
+                >
+                  Next
+                </button>
+              ) : (
+                <button
+                  onClick={() => setShowTourModal(false)}
+                  className="px-4 py-1.5 rounded-xl bg-[#0f0f14] text-white text-xs font-bold cursor-pointer"
+                >
+                  Finish Tour
+                </button>
+              )}
             </div>
           </div>
         </div>
-      )}
+      </Dialog>
 
       {/* Command Palette (⌘K) */}
-      {showCommandPalette && (
-        <div
-          className="fixed inset-0 bg-black/55 backdrop-blur-xs flex items-start justify-center pt-24 p-4 z-50"
-          onClick={() => setShowCommandPalette(false)}
-        >
-          <div
-            className="bg-white rounded-2xl max-w-lg w-full border border-[#e4e4e9] shadow-2xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="p-3 border-b border-[#e4e4e9] flex items-center gap-2">
-              <Search className="w-4 h-4 text-[#8a8a98]" />
-              <input
-                autoFocus
-                value={cmdSearch}
-                onChange={(e) => setCmdSearch(e.target.value)}
-                placeholder="Jump to any page or module..."
-                className="flex-1 text-sm focus:outline-none text-[#0f0f14]"
-              />
+      <Dialog
+        open={showCommandPalette}
+        onClose={() => setShowCommandPalette(false)}
+        maxWidthClass="max-w-lg"
+        noPadding
+      >
+        <div>
+          <div className="p-3 border-b border-[#e4e4e9] flex items-center gap-2">
+            <Search className="w-4 h-4 text-[#8a8a98]" />
+            <input
+              autoFocus
+              value={cmdSearch}
+              onChange={(e) => setCmdSearch(e.target.value)}
+              placeholder="Jump to any page or module..."
+              className="flex-1 text-sm focus:outline-none text-[#0f0f14]"
+            />
+            <button
+              onClick={() => setShowCommandPalette(false)}
+              className="text-xs text-[#8a8a98] font-mono-code cursor-pointer"
+            >
+              ESC
+            </button>
+          </div>
+          <div className="max-h-72 overflow-y-auto p-2 space-y-1">
+            {QUICK_JUMP_ITEMS.filter((it) =>
+              `${it.label} ${it.keywords}`.toLowerCase().includes(cmdSearch.toLowerCase())
+            ).map((it) => (
               <button
-                onClick={() => setShowCommandPalette(false)}
-                className="text-xs text-[#8a8a98] font-mono-code"
+                key={it.id}
+                onClick={() => {
+                  setCurrentTab(it.id);
+                  setShowCommandPalette(false);
+                  setCmdSearch('');
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#fff7ed] text-xs font-semibold text-[#0f0f14] flex justify-between items-center cursor-pointer"
               >
-                ESC
+                <span>{it.label}</span>
+                <span className="text-[10px] text-[#8a8a98]">Jump →</span>
               </button>
-            </div>
-            <div className="max-h-72 overflow-y-auto p-2 space-y-1">
-              {QUICK_JUMP_ITEMS.filter((it) =>
-                `${it.label} ${it.keywords}`.toLowerCase().includes(cmdSearch.toLowerCase())
-              ).map((it) => (
-                <button
-                  key={it.id}
-                  onClick={() => {
-                    setCurrentTab(it.id);
-                    setShowCommandPalette(false);
-                    setCmdSearch('');
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-xl hover:bg-[#fff7ed] text-xs font-semibold text-[#0f0f14] flex justify-between items-center cursor-pointer"
-                >
-                  <span>{it.label}</span>
-                  <span className="text-[10px] text-[#8a8a98]">Jump →</span>
-                </button>
-              ))}
-            </div>
+            ))}
           </div>
         </div>
-      )}
+      </Dialog>
 
       <LiveCallSimulatorModal
         isOpen={isSimulatorOpen}

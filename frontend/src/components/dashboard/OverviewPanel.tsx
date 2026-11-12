@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import {
   CountUp,
   AuroraBackground,
-  GlareHover,
   SquishSwitch,
   BorderGlow,
   AnimatedList,
 } from '@/components/reactbits';
+import { BorderBeam, Spotlight } from '@/components/motion';
+import { useToast, Dialog } from '@/components/ui';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import BRAND from '@/lib/brand';
 import { INDUSTRY_TEMPLATE_CATEGORIES } from '@/lib/templates';
@@ -97,6 +98,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [scriptJson, setScriptJson] = useState('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const { toast } = useToast();
 
   const chartData = padDailySeries(stats?.daily_series);
 
@@ -130,10 +132,16 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
         status: 'draft',
       });
       setPromptText('');
+      toast({
+        type: 'success',
+        title: 'AI Employee created',
+        description: `Configured in ${language} (${callMode} mode). Opening Your Team...`,
+      });
       if (onAgentCreated) onAgentCreated();
       onNavigateTab('agents');
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message });
+      toast({ type: 'error', title: 'Failed to build AI Employee', description: err.message });
     } finally {
       setBuilding(false);
     }
@@ -168,10 +176,12 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
 
   return (
     <div className="space-y-6">
-      {/* Dark Hero Prompt Builder Card (Outpero Home Pattern + ReactBits Aurora & Glare) */}
-      <GlareHover className="rounded-[24px] shadow-xl">
-        <AuroraBackground className="rounded-[24px] bg-outpero-dark-card text-[#f2f1f7] border border-white/10">
-          <div className="p-5 sm:p-7 space-y-5">
+      {/* Dark Hero Prompt Builder Card (Outpero Home Pattern + Aurora, Spotlight & BorderBeam) */}
+      <div className="relative rounded-[24px] shadow-xl overflow-hidden">
+        <AuroraBackground className="relative rounded-[24px] bg-outpero-dark-card text-[#f2f1f7] border border-white/10">
+          <Spotlight className="-top-32 left-0 md:left-32" fill="#ff5500" />
+          <BorderBeam size={240} duration={14} borderWidth={1.5} colorFrom="#ff5500" colorTo="#fbbf24" />
+          <div className="relative z-10 p-5 sm:p-7 space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/10 text-[#ff8547] text-[11px] font-bold mb-2">
@@ -320,7 +330,7 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
         )}
           </div>
         </AuroraBackground>
-      </GlareHover>
+      </div>
 
       {feedback && (
         <div
@@ -536,30 +546,26 @@ export const OverviewPanel: React.FC<OverviewPanelProps> = ({
       </div>
 
       {/* Paste JSON Script Modal */}
-      {showPasteModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleImportJsonScript} className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-3 text-xs shadow-2xl border border-[#e4e4e9]">
-            <div className="flex justify-between items-center border-b border-[#e4e4e9] pb-3">
-              <h3 className="font-display text-base font-extrabold text-[#0f0f14]">Paste a Copied Script JSON</h3>
-              <button type="button" onClick={() => setShowPasteModal(false)} className="text-[#6e6e7e] hover:text-[#0f0f14] cursor-pointer">
-                Cancel
-              </button>
-            </div>
-            <p className="text-[#525260]">Nothing is created until you validate and confirm.</p>
-            <textarea
-              required
-              rows={8}
-              value={scriptJson}
-              onChange={(e) => setScriptJson(e.target.value)}
-              placeholder='{"name":"My Agent","language":"te-IN","system_prompt":"..."}'
-              className="w-full px-3 py-2 rounded-xl border border-[#e4e4e9] font-mono-code text-[#0f0f14]"
-            />
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-[#ff5500] hover:bg-[#ea580c] text-white font-bold cursor-pointer">
-              Check Script & Create Draft
-            </button>
-          </form>
-        </div>
-      )}
+      <Dialog
+        open={showPasteModal}
+        onClose={() => setShowPasteModal(false)}
+        title="Paste a Copied Script JSON"
+        description="Nothing is created until you validate and confirm."
+      >
+        <form onSubmit={handleImportJsonScript} className="space-y-3 text-xs">
+          <textarea
+            required
+            rows={8}
+            value={scriptJson}
+            onChange={(e) => setScriptJson(e.target.value)}
+            placeholder='{"name":"My Agent","language":"te-IN","system_prompt":"..."}'
+            className="w-full px-3 py-2 rounded-xl border border-[#e4e4e9] font-mono-code text-[#0f0f14] focus:outline-none focus:border-[#ff5500] focus:ring-2 focus:ring-[#ff5500]/15"
+          />
+          <button type="submit" className="w-full py-2.5 rounded-xl bg-[#ff5500] hover:bg-[#ea580c] text-white font-bold cursor-pointer transition-colors">
+            Check Script &amp; Create Draft
+          </button>
+        </form>
+      </Dialog>
     </div>
   );
 };

@@ -1,5 +1,6 @@
 import React from 'react';
 import { TrivaanaLogo } from '@/components/brand/TrivaanaLogo';
+import { BackgroundBeams } from '@/components/motion';
 import { ShieldCheck } from 'lucide-react';
 import BRAND from '@/lib/brand';
 import type { PublicRoute } from './LandingPage';
@@ -26,9 +27,10 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({
   };
 
   return (
-    <footer className="bg-[#121019] text-slate-400 border-t border-white/10 text-sm overflow-hidden">
+    <footer className="relative bg-[#121019] text-slate-400 border-t border-white/10 text-sm overflow-hidden">
+      <BackgroundBeams className="opacity-25" />
       {/* Closing High-Contrast Outpero CTA Band */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-10 border-b border-white/10 flex flex-col md:flex-row items-center justify-between gap-6">
+      <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-14 pb-10 border-b border-white/10 flex flex-col md:flex-row items-center justify-between gap-6">
         <div>
           <h3 className="font-display text-2xl sm:text-3xl font-extrabold text-white tracking-tight">
             Your customers are already calling.

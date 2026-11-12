@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Agent, AnalyticsStats } from '@/types/trivaana';
 import { padDailySeries } from '@/lib/charts';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { EmptyState, DashboardSkeleton, Badge } from '@/components/ui';
+import { NumberTicker } from '@/components/motion';
 import { BarChart3, RefreshCw } from 'lucide-react';
 import {
   BarChart,
@@ -48,15 +49,19 @@ export const AnalyticsPanel: React.FC = () => {
     return () => clearTimeout(id);
   }, [loadAnalytics]);
 
+  if (loading && !stats) {
+    return <DashboardSkeleton />;
+  }
+
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-3xl bg-white border border-slate-200/90 shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-6 rounded-2xl bg-white border border-[#e4e4e9] shadow-2xs">
         <div>
-          <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-orange-100/80 text-orange-800 text-xs font-semibold w-fit mb-2 border border-orange-200">
-            <BarChart3 className="w-3.5 h-3.5 text-orange-600" />
-            <span>Database-Driven Analytics & Reporting</span>
-          </div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Calling Performance & Spend</h1>
+          <Badge variant="primary" className="mb-2">
+            <BarChart3 className="w-3.5 h-3.5" />
+            <span>Database-Driven Analytics &amp; Reporting</span>
+          </Badge>
+          <h1 className="font-display text-2xl font-extrabold text-[#0f0f14] tracking-tight">Calling Performance &amp; Spend</h1>
         </div>
         <div className="flex flex-wrap gap-2 text-xs">
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} className="px-3 py-2 rounded-xl border border-slate-200 bg-white">
@@ -81,10 +86,10 @@ export const AnalyticsPanel: React.FC = () => {
 
       {/* Overview KPI Grid */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9]"><div className="text-[#6e6e7e]">Total Calls</div><div className="font-display text-2xl font-extrabold tabular-nums mt-1 text-[#0f0f14]">{stats?.total_calls_placed ?? 0}</div></div>
-        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9]"><div className="text-[#6e6e7e]">Connection Rate</div><div className="font-display text-2xl font-extrabold text-emerald-600 tabular-nums mt-1">{stats?.connection_rate_pct ?? 0}%</div></div>
-        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9]"><div className="text-[#6e6e7e]">Interested Leads</div><div className="font-display text-2xl font-extrabold text-[#ff5500] tabular-nums mt-1">{stats?.interested_leads ?? 0}</div></div>
-        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9]"><div className="text-[#6e6e7e]">Total Usage Spend</div><div className="font-display text-2xl font-extrabold tabular-nums mt-1 text-[#0f0f14]">₹{(stats?.total_usage_inr ?? 0).toFixed(2)}</div></div>
+        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9] shadow-2xs"><div className="text-[#6e6e7e]">Total Calls</div><div className="font-display text-2xl font-extrabold tabular-nums mt-1 text-[#0f0f14]"><NumberTicker value={stats?.total_calls_placed ?? 0} /></div></div>
+        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9] shadow-2xs"><div className="text-[#6e6e7e]">Connection Rate</div><div className="font-display text-2xl font-extrabold text-emerald-600 tabular-nums mt-1"><NumberTicker value={stats?.connection_rate_pct ?? 0} suffix="%" /></div></div>
+        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9] shadow-2xs"><div className="text-[#6e6e7e]">Interested Leads</div><div className="font-display text-2xl font-extrabold text-[#ff5500] tabular-nums mt-1"><NumberTicker value={stats?.interested_leads ?? 0} /></div></div>
+        <div className="p-4 rounded-2xl bg-white border border-[#e4e4e9] shadow-2xs"><div className="text-[#6e6e7e]">Total Usage Spend</div><div className="font-display text-2xl font-extrabold tabular-nums mt-1 text-[#0f0f14]">₹<NumberTicker value={stats?.total_usage_inr ?? 0} decimals={2} /></div></div>
       </div>
 
       {/* Connected vs Unanswered Chart */}

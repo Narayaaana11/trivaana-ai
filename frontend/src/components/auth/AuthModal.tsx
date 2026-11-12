@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Lock, Mail, User, Building, X, AlertCircle, LogIn, UserPlus, CheckCircle2, KeyRound } from 'lucide-react';
 import { TrivaanaLogo } from '@/components/brand/TrivaanaLogo';
+import { Dialog } from '@/components/ui/Dialog';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -78,8 +79,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-200">
-      <div className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+    <Dialog open={isOpen} onClose={onClose} maxWidthClass="max-w-md" noPadding>
+      <div className="relative w-full bg-white overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-slate-100 bg-slate-50/50">
           <div className="flex items-center gap-3">
@@ -284,6 +285,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </Dialog>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { motion } from 'framer-motion';
 import { TrivaanaLogo } from '@/components/brand/TrivaanaLogo';
 import { StatusMark, WarmTooltip } from '@/components/reactbits';
 import {
@@ -250,19 +251,30 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                       key={item.id}
                       onClick={() => handleNav(item.id)}
                       title={collapsed ? item.label : undefined}
-                      className={`w-full flex items-center ${
+                      className={`relative w-full flex items-center ${
                         collapsed ? 'justify-center px-2' : 'justify-between px-2.5'
-                      } py-2 rounded-[10px] text-[13px] transition-all cursor-pointer ${
+                      } py-2 rounded-[10px] text-[13px] transition-colors cursor-pointer ${
                         isActive
                           ? isDark
-                            ? 'bg-[#222536] text-white font-semibold border border-[#32364c] shadow-2xs'
-                            : 'bg-[#ebebf0] text-[#0f0f14] font-semibold shadow-2xs'
+                            ? 'text-white font-semibold'
+                            : 'text-[#0f0f14] font-semibold'
                           : isDark
                           ? 'text-[#a1a1b2] hover:text-white hover:bg-[#1a1c29] font-medium'
                           : 'text-[#525260] hover:text-[#0f0f14] hover:bg-[#ebebf0]/60 font-medium'
                       }`}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
+                      {isActive && (
+                        <motion.span
+                          layoutId="sidebarActiveItem"
+                          transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                          className={`absolute inset-0 rounded-[10px] ${
+                            isDark
+                              ? 'bg-[#222536] border border-[#32364c] shadow-2xs'
+                              : 'bg-[#ebebf0] shadow-2xs'
+                          }`}
+                        />
+                      )}
+                      <div className="relative z-10 flex items-center gap-2.5 min-w-0">
                         <Icon
                           className={`w-4 h-4 shrink-0 ${
                             isActive
@@ -276,7 +288,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
                       </div>
                       {!collapsed && item.badge && (
                         <span
-                          className={`text-[9px] px-1.5 py-0.5 rounded-md font-bold border ${
+                          className={`relative z-10 text-[9px] px-1.5 py-0.5 rounded-md font-bold border ${
                             isDark
                               ? 'bg-[#151722] text-[#ff8547] border-[#2d3045]'
                               : 'bg-white text-[#c2410c] border-[#e4e4e9]'

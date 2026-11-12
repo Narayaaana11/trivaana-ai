@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Agent } from '@/types/trivaana';
 import { DecryptedText } from '@/components/reactbits';
+import { Dialog } from '@/components/ui';
 import {
   Code2,
   KeyRound,
@@ -345,37 +346,36 @@ export const DevelopersPanel: React.FC<DevelopersPanelProps> = ({ initialSubTab 
         </div>
       )}
 
-      {showWebhookModal && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleCreateWebhook} className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 text-xs shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3">
-              <h3 className="text-base font-black text-slate-900">Add Webhook Endpoint</h3>
-              <button type="button" onClick={() => setShowWebhookModal(false)} className="text-slate-500 cursor-pointer">Close</button>
-            </div>
-            <input required placeholder="Endpoint Label (e.g. CRM Webhook)" value={whName} onChange={(e) => setWhName(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
-            <input required type="url" placeholder="https://api.yourcrm.com/webhooks/trivaana" value={whUrl} onChange={(e) => setWhUrl(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
-            <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
-              <span className="font-bold text-slate-800">Include call transcripts in payload</span>
-              <input type="checkbox" checked={includeTranscripts} onChange={(e) => setIncludeTranscripts(e.target.checked)} />
-            </label>
-            <div className="space-y-1.5">
-              <div className="font-bold text-slate-700">Subscribed Events</div>
-              {WEBHOOK_EVENTS.map((ev) => (
-                <label key={ev.id} className="flex items-start gap-2 p-2 rounded-xl hover:bg-slate-50 cursor-pointer">
-                  <input type="checkbox" checked={selectedEvents.includes(ev.id)} onChange={() => toggleEvent(ev.id)} className="mt-0.5" />
-                  <div>
-                    <div className="font-mono font-bold text-slate-900">{ev.label}</div>
-                    <div className="text-[11px] text-slate-500">{ev.desc}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
-            <button type="submit" className="w-full py-2.5 rounded-xl bg-orange-600 text-white font-bold cursor-pointer">
-              Save Endpoint
-            </button>
-          </form>
-        </div>
-      )}
+      <Dialog
+        open={showWebhookModal}
+        onClose={() => setShowWebhookModal(false)}
+        title="Add Webhook Endpoint"
+        maxWidthClass="max-w-lg"
+      >
+        <form onSubmit={handleCreateWebhook} className="space-y-4 text-xs">
+          <input required placeholder="Endpoint Label (e.g. CRM Webhook)" value={whName} onChange={(e) => setWhName(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+          <input required type="url" placeholder="https://api.yourcrm.com/webhooks/trivaana" value={whUrl} onChange={(e) => setWhUrl(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+          <label className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+            <span className="font-bold text-slate-800">Include call transcripts in payload</span>
+            <input type="checkbox" checked={includeTranscripts} onChange={(e) => setIncludeTranscripts(e.target.checked)} />
+          </label>
+          <div className="space-y-1.5">
+            <div className="font-bold text-slate-700">Subscribed Events</div>
+            {WEBHOOK_EVENTS.map((ev) => (
+              <label key={ev.id} className="flex items-start gap-2 p-2 rounded-xl hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" checked={selectedEvents.includes(ev.id)} onChange={() => toggleEvent(ev.id)} className="mt-0.5" />
+                <div>
+                  <div className="font-mono font-bold text-slate-900">{ev.label}</div>
+                  <div className="text-[11px] text-slate-500">{ev.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
+          <button type="submit" className="w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold cursor-pointer">
+            Save Endpoint
+          </button>
+        </form>
+      </Dialog>
     </div>
   );
 };

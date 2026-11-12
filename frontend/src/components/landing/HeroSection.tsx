@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import {
   BlurText,
   GradientText,
@@ -9,11 +10,11 @@ import {
   ClickSpark,
   Magnet,
   AuroraBackground,
-  GlareHover,
   TextType,
   VoicePill,
   LogoLoop,
 } from '@/components/reactbits';
+import { BorderBeam, Spotlight } from '@/components/motion';
 import BRAND from '@/lib/brand';
 import {
   ArrowRight,
@@ -302,10 +303,17 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           </button>
         </div>
 
-        {/* Outpero Centered Dark Prompt Builder with AuroraBackground & GlareHover */}
-        <GlareHover className="mt-10 rounded-[26px] shadow-2xl">
-          <AuroraBackground className="text-left rounded-[26px] bg-outpero-dark-card border border-white/10">
-            <form onSubmit={handleBuildEmployee} className="p-5 sm:p-7 space-y-4">
+        {/* Outpero Centered Dark Prompt Builder with Aceternity Spotlight, Magic UI BorderBeam & AuroraBackground */}
+        <motion.div
+          initial={{ opacity: 0, y: 18 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.45, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
+          className="relative mt-10 rounded-[26px] shadow-2xl overflow-hidden"
+        >
+          <AuroraBackground className="relative text-left rounded-[26px] bg-outpero-dark-card border border-white/10">
+            <Spotlight className="-top-32 left-0 md:left-40" fill="#ff5500" />
+            <BorderBeam size={260} duration={14} borderWidth={1.5} colorFrom="#ff5500" colorTo="#fbbf24" />
+            <form onSubmit={handleBuildEmployee} className="relative z-10 p-5 sm:p-7 space-y-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 text-[#ff8547] text-[11px] font-bold">
@@ -352,12 +360,21 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
                       key={tab.id}
                       type="button"
                       onClick={() => handleModeSwitch(tab.id as any)}
-                      className={`py-2 px-3 rounded-xl font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-all ${
-                        active ? 'bg-[#ff5500] text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                      className={`relative py-2 px-3 rounded-xl font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors ${
+                        active ? 'text-white' : 'text-slate-400 hover:text-white'
                       }`}
                     >
-                      <Icon className="w-3.5 h-3.5 shrink-0" />
-                      <span className="truncate">{tab.label}</span>
+                      {active && (
+                        <motion.span
+                          layoutId="heroModePill"
+                          transition={{ type: 'spring', stiffness: 420, damping: 32 }}
+                          className="absolute inset-0 rounded-xl bg-[#ff5500] shadow-sm"
+                        />
+                      )}
+                      <span className="relative z-10 flex items-center justify-center gap-1.5 truncate">
+                        <Icon className="w-3.5 h-3.5 shrink-0" />
+                        <span className="truncate">{tab.label}</span>
+                      </span>
                     </button>
                   );
                 })}
@@ -448,7 +465,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
               </div>
             </form>
           </AuroraBackground>
-        </GlareHover>
+        </motion.div>
 
         {/* Outpero Trust Line Below Dark Prompt Builder */}
         <div className="mt-6 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-xs font-medium text-[#525260]">

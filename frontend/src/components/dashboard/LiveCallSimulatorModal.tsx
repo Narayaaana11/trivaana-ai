@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Agent } from '@/types/trivaana';
+import { Dialog } from '@/components/ui/Dialog';
+import { BorderBeam } from '@/components/motion';
 
 interface LiveCallSimulatorModalProps {
   isOpen: boolean;
@@ -41,8 +43,6 @@ export const LiveCallSimulatorModal: React.FC<LiveCallSimulatorModalProps> = ({
       }).catch(() => {});
     }
   }, [isOpen, selectedAgentId]);
-
-  if (!isOpen) return null;
 
   const selectedAgent = agents.find((a) => a.id === selectedAgentId);
 
@@ -118,8 +118,9 @@ export const LiveCallSimulatorModal: React.FC<LiveCallSimulatorModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-      <div className="bg-slate-950 rounded-3xl max-w-3xl w-full border border-slate-800 shadow-2xl overflow-hidden text-white flex flex-col md:flex-row">
+    <Dialog open={isOpen} onClose={onClose} variant="dark" maxWidthClass="max-w-3xl" noPadding>
+      <div className="relative bg-slate-950 w-full overflow-hidden text-white flex flex-col md:flex-row">
+        <BorderBeam size={220} duration={12} borderWidth={1} colorFrom="#ff5500" colorTo="#fbbf24" />
         {/* Left: Agent & Controls */}
         <div className="w-full md:w-72 p-6 border-b md:border-b-0 md:border-r border-slate-800 flex flex-col justify-between gap-4">
           <div className="space-y-4">
@@ -261,6 +262,6 @@ export const LiveCallSimulatorModal: React.FC<LiveCallSimulatorModalProps> = ({
           )}
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 };

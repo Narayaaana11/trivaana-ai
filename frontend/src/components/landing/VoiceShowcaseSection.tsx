@@ -8,6 +8,7 @@ import {
   BorderGlow,
   VoicePill,
 } from '@/components/reactbits';
+import { BorderBeam } from '@/components/motion';
 import { Volume2, Radio } from 'lucide-react';
 
 interface VoiceShowcaseSectionProps {
@@ -237,9 +238,12 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
           {VOICE_PROFILES.map((vp) => {
             const active = playingId === vp.id;
             return (
-              <TiltedCard key={vp.id} maxTilt={3}>
-                <BorderGlow className="h-full shadow-2xs">
-                  <div className="p-5 flex flex-col justify-between gap-4 h-full">
+              <TiltedCard key={vp.id} maxTilt={2.5}>
+                <BorderGlow className="relative h-full shadow-2xs overflow-hidden">
+                  {active && !isPaused && (
+                    <BorderBeam size={200} duration={8} borderWidth={1.5} colorFrom="#ff5500" colorTo="#fbbf24" />
+                  )}
+                  <div className="relative z-10 p-5 flex flex-col justify-between gap-4 h-full">
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
@@ -262,11 +266,20 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
                     </p>
 
                     {active && (
-                      <div className="w-full h-1.5 rounded-full bg-[#e4e4e9] overflow-hidden">
-                        <div
-                          className="h-full bg-[#ff5500] transition-all duration-150"
-                          style={{ width: `${Math.max(8, progress)}%` }}
-                        />
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between text-[10px] font-semibold text-[#525260]">
+                          <span className="inline-flex items-center gap-1.5 text-[#ff5500]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#ff5500] animate-ping" />
+                            <span>{isPaused ? 'Paused' : 'Playing Sarvam AI audio'}</span>
+                          </span>
+                          <span className="tabular-nums font-mono">{progress}%</span>
+                        </div>
+                        <div className="w-full h-1.5 rounded-full bg-[#e4e4e9] overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[#ff5500] to-[#fbbf24] transition-all duration-150"
+                            style={{ width: `${Math.max(6, progress)}%` }}
+                          />
+                        </div>
                       </div>
                     )}
 

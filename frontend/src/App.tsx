@@ -1,6 +1,8 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useSearchParams } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
+import { MotionConfig } from 'framer-motion';
+import { ToastProvider } from '@/components/ui/Toast';
 import { type PublicRoute } from '@/components/landing/LandingPage';
 import { PublicPortal } from '@/apps/public/PublicPortal';
 import { LiveCallSimulatorModal } from '@/components/dashboard/LiveCallSimulatorModal';
@@ -311,11 +313,15 @@ function AppShell() {
 
 export function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AppShell />
-      </BrowserRouter>
-    </QueryClientProvider>
+    <MotionConfig reducedMotion="user">
+      <ToastProvider>
+        <QueryClientProvider client={queryClient}>
+          <BrowserRouter>
+            <AppShell />
+          </BrowserRouter>
+        </QueryClientProvider>
+      </ToastProvider>
+    </MotionConfig>
   );
 }
 

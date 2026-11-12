@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Transaction, Tenant, PricingCatalog } from '@/types/trivaana';
 import { AuroraBackground, GlareHover, ClickSpark, WarmTooltip } from '@/components/reactbits';
+import { Dialog } from '@/components/ui';
 import confetti from 'canvas-confetti';
 import {
   Wallet,
@@ -452,13 +453,14 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
         </div>
       </div>
 
-      {selectedInvoice && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex justify-between items-center border-b pb-3">
-              <div className="font-black text-slate-900">Tax Invoice {selectedInvoice.invoice_number}</div>
-              <button onClick={() => setSelectedInvoice(null)} className="text-xs font-bold text-slate-500 cursor-pointer">Close</button>
-            </div>
+      <Dialog
+        open={Boolean(selectedInvoice)}
+        onClose={() => setSelectedInvoice(null)}
+        title={selectedInvoice ? `Tax Invoice ${selectedInvoice.invoice_number}` : undefined}
+        maxWidthClass="max-w-md"
+      >
+        {selectedInvoice && (
+          <div className="space-y-4">
             <div className="text-xs space-y-2 text-slate-600">
               <div className="flex justify-between"><span>Workspace:</span><span className="font-bold text-slate-900">{tenant?.name}</span></div>
               <div className="flex justify-between"><span>SAC Code:</span><span className="font-mono">{selectedInvoice.sac_code}</span></div>
@@ -466,12 +468,12 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
               <div className="flex justify-between"><span>IGST / CGST+SGST (18%):</span><span className="font-mono">₹{selectedInvoice.gst_inr.toFixed(2)}</span></div>
               <div className="flex justify-between border-t pt-2 font-bold text-slate-900 text-sm"><span>Total Paid:</span><span className="font-mono">₹{selectedInvoice.total_inr.toFixed(2)}</span></div>
             </div>
-            <button onClick={() => window.print()} className="w-full py-2.5 rounded-xl bg-orange-600 text-white text-xs font-bold cursor-pointer">
+            <button onClick={() => window.print()} className="w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold cursor-pointer">
               Print / Save PDF
             </button>
           </div>
-        </div>
-      )}
+        )}
+      </Dialog>
     </div>
   );
 };

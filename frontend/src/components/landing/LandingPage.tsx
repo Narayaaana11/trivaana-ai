@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { LandingNav } from './LandingNav';
 import { HeroSection } from './HeroSection';
+import { FeaturesBentoSection } from './FeaturesBentoSection';
 import { HowItWorksSection } from './HowItWorksSection';
 import { VoiceShowcaseSection } from './VoiceShowcaseSection';
 import { PlatformModesSection } from './PlatformModesSection';
 import { VerticalPresetsSection } from './VerticalPresetsSection';
 import { RoiCalculatorSection } from './RoiCalculatorSection';
 import { PricingSection } from './PricingSection';
+import { TestimonialsAndFaqSection } from './TestimonialsAndFaqSection';
 import { LandingFooter } from './LandingFooter';
 import {
   PublicVoicesPage,
@@ -88,6 +90,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onOpenSimulator={onOpenSimulator}
             />
 
+            <FeaturesBentoSection
+              onEnterDashboard={onEnterDashboard}
+              onOpenSimulator={onOpenSimulator}
+            />
+
             <HowItWorksSection onEnterDashboard={onEnterDashboard} />
 
             <VoiceShowcaseSection onEnterDashboard={onEnterDashboard} />
@@ -107,6 +114,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onEnterDashboard={onEnterDashboard}
               onSelectPlan={onSelectPlan}
             />
+
+            <TestimonialsAndFaqSection />
           </>
         )}
 
