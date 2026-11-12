@@ -161,9 +161,15 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
   const [newAgentIndustry, setNewAgentIndustry] = useState('Real Estate');
   const [newAgentLang, setNewAgentLang] = useState('te-IN');
   const [newAgentModel, setNewAgentModel] = useState<'bulbul:v3' | 'bulbul:v4-flash'>('bulbul:v3');
+  const [newAgentGender, setNewAgentGender] = useState<'all' | 'female' | 'male'>('all');
+  const [newAgentVoiceId, setNewAgentVoiceId] = useState<string>('shubh');
+  const [modalVoices, setModalVoices] = useState<VoiceProfile[]>([]);
+  const [loadingModalVoices, setLoadingModalVoices] = useState(false);
   const [newAgentBrief, setNewAgentBrief] = useState('');
   const [auditioningModel, setAuditioningModel] = useState<string | null>(null);
   const [playingModelId, setPlayingModelId] = useState<string | null>(null);
+  const [auditioningVoiceId, setAuditioningVoiceId] = useState<string | null>(null);
+  const [playingVoiceId, setPlayingVoiceId] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const loadAgentDetails = useCallback(async (agentId: string, lang?: string) => {
@@ -251,9 +257,11 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
       });
       const cfg = gen.config;
       const chosenSpeaker =
-        newAgentModel === 'bulbul:v4-flash'
+        newAgentVoiceId ||
+        (newAgentModel === 'bulbul:v4-flash'
           ? SARVAM_V4_DEFAULT_SPEAKER[newAgentLang] || 'shubh_hi_customer'
-          : SARVAM_V3_DEFAULT_SPEAKER[newAgentLang] || 'shubh';
+          : SARVAM_V3_DEFAULT_SPEAKER[newAgentLang] || 'shubh');
+      const selectedModalVoice = modalVoices.find((v) => v.provider_voice_id === chosenSpeaker);
       const created = await trivaanaApi.createAgent({
         name: newAgentName,
         vertical: newAgentIndustry,
@@ -261,6 +269,7 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
         provider: 'sarvam',
         tts_model_id: newAgentModel,
         voice_id: chosenSpeaker,
+        voice_gender: selectedModalVoice?.gender || (newAgentGender !== 'all' ? newAgentGender : undefined),
         greeting_message: cfg.greeting,
         personality: cfg.personality,
         system_prompt: cfg.system_prompt,
@@ -344,6 +353,73 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
     }
     setIsPlayingAudio(false);
     setPlayingModelId(null);
+    setPlayingVoiceId(null);
+  };
+
+  useEffect(() => {
+    if (!showCreateModal) return;
+    let active = true;
+    setLoadingModalVoices(true);
+    trivaanaApi
+      .getVoices({
+        provider: 'sarvam',
+        language: newAgentLang,
+        model_id: newAgentModel,
+        gender: newAgentGender !== 'all' ? newAgentGender : undefined,
+      })
+      .then((res) => {
+        if (!active) return;
+        const list = (res.voices || []).filter((v) => v.provider === 'sarvam');
+        setModalVoices(list);
+        if (list.length > 0 && !list.some((v) => v.provider_voice_id === newAgentVoiceId)) {
+          setNewAgentVoiceId(list[0].provider_voice_id);
+        }
+      })
+      .catch(() => {
+        if (active) setModalVoices([]);
+      })
+      .finally(() => {
+        if (active) setLoadingModalVoices(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [showCreateModal, newAgentLang, newAgentModel, newAgentGender]);
+
+  const handleAuditionSpeakerVoice = async (speakerId: string, lang: string, modelId: 'bulbul:v3' | 'bulbul:v4-flash') => {
+    if (playingVoiceId === speakerId) {
+      stopAuditionAudio();
+      return;
+    }
+    stopAuditionAudio();
+    const text = SARVAM_SAMPLE_BY_LANG[lang] || SARVAM_SAMPLE_BY_LANG['en-IN'];
+    setAuditioningVoiceId(speakerId);
+    try {
+      const res = await trivaanaApi.previewVoice({
+        provider: 'sarvam',
+        model_id: modelId,
+        voice_id: speakerId,
+        language: lang,
+        text,
+      });
+      if (!res.audio_base64) {
+        setFeedback({ type: 'error', message: res.message || `No audio returned for ${speakerId}.` });
+        return;
+      }
+      const audio = new Audio(`data:${res.content_type || 'audio/mpeg'};base64,${res.audio_base64}`);
+      audioRef.current = audio;
+      setPlayingVoiceId(speakerId);
+      audio.onended = () => stopAuditionAudio();
+      audio.onerror = () => {
+        setFeedback({ type: 'error', message: `Failed to play ${speakerId} sample.` });
+        stopAuditionAudio();
+      };
+      await audio.play();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || `Voice preview failed for ${speakerId}.` });
+    } finally {
+      setAuditioningVoiceId(null);
+    }
   };
 
   const handleAuditionSarvamModel = async (
@@ -1527,6 +1603,108 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                       </div>
                     );
                   })}
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-extrabold text-slate-900">
+                    Step 3 · Choose Voice ({modalVoices.length} {newAgentModel} speakers)
+                  </span>
+                  <div className="flex items-center gap-1">
+                    {(['all', 'female', 'male'] as const).map((g) => (
+                      <button
+                        key={g}
+                        type="button"
+                        onClick={() => setNewAgentGender(g)}
+                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold capitalize cursor-pointer border ${
+                          newAgentGender === g
+                            ? 'bg-slate-900 text-white border-slate-900'
+                            : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {g === 'all' ? 'All' : g}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {loadingModalVoices ? (
+                  <div className="py-4 text-center text-[11px] text-slate-500">Loading Sarvam voices...</div>
+                ) : modalVoices.length === 0 ? (
+                  <div className="py-3 text-center text-[11px] text-slate-500">
+                    No voices matched this filter. Try switching gender to All.
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-44 overflow-y-auto pr-1">
+                    {modalVoices.map((v) => {
+                      const isChosen = newAgentVoiceId === v.provider_voice_id;
+                      const isLoading = auditioningVoiceId === v.provider_voice_id;
+                      const isPlaying = playingVoiceId === v.provider_voice_id;
+                      return (
+                        <div
+                          key={v.id}
+                          onClick={() => setNewAgentVoiceId(v.provider_voice_id)}
+                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 cursor-pointer transition ${
+                            isChosen
+                              ? 'bg-orange-50/70 border-orange-500'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="min-w-0">
+                            <div className="font-bold text-[11px] text-slate-900 truncate flex items-center gap-1.5">
+                              <span>{v.name}</span>
+                              {isChosen && <span className="text-[9px] text-orange-600 font-extrabold">✓</span>}
+                            </div>
+                            <div className="text-[10px] text-slate-500 capitalize truncate">
+                              {v.gender || 'neutral'} · {v.provider_voice_id}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              type="button"
+                              disabled={isLoading}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleAuditionSpeakerVoice(v.provider_voice_id, newAgentLang, newAgentModel);
+                              }}
+                              className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                            >
+                              {isLoading ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : isPlaying ? (
+                                <Square className="w-3 h-3" />
+                              ) : (
+                                <Play className="w-3 h-3" />
+                              )}
+                              <span>{isLoading ? '...' : isPlaying ? 'Stop' : 'Listen'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setNewAgentVoiceId(v.provider_voice_id);
+                              }}
+                              className={`px-2 py-1 rounded-lg text-[10px] font-bold cursor-pointer border ${
+                                isChosen
+                                  ? 'bg-orange-600 text-white border-orange-600'
+                                  : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                              }`}
+                            >
+                              {isChosen ? '✓ Picked' : 'Pick'}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="text-[10px] font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <span>
+                    Picked: <strong className="text-slate-900">{newAgentVoiceId}</strong> · <span className="font-mono">{newAgentModel}</span> · {newAgentLang}
+                  </span>
+                  <span className="text-orange-700 font-bold">
+                    {newAgentModel === 'bulbul:v4-flash' ? '₹0.84 – ₹0.99 / min API' : '₹1.76 – ₹1.99 / min API'}
+                  </span>
                 </div>
               </div>
 
