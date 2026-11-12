@@ -937,6 +937,61 @@ CREATE TABLE IF NOT EXISTS ncpr_scrub_jobs (
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_ncpr_jobs_tenant ON ncpr_scrub_jobs(tenant_id, created_at DESC);
+
+-- Discovered TTS Models Registry (synced from ElevenLabs /v1/models)
+CREATE TABLE IF NOT EXISTS voice_models (
+    model_id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL DEFAULT 'elevenlabs',
+    name TEXT NOT NULL,
+    description TEXT,
+    can_do_tts INTEGER NOT NULL DEFAULT 1,
+    languages_json TEXT NOT NULL DEFAULT '[]',
+    cost_factor REAL NOT NULL DEFAULT 1.0,
+    max_chars_free INTEGER NOT NULL DEFAULT 5000,
+    max_chars_subscribed INTEGER NOT NULL DEFAULT 10000,
+    streaming_supported INTEGER NOT NULL DEFAULT 1,
+    latency_tier TEXT NOT NULL DEFAULT 'balanced',
+    quality_tier TEXT NOT NULL DEFAULT 'balanced',
+    synced_at TEXT NOT NULL
+);
+
+-- Tenant Favourite Voices
+CREATE TABLE IF NOT EXISTS voice_favorites (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    voice_profile_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(tenant_id, user_id, voice_profile_id),
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_voice_favorites_tenant ON voice_favorites(tenant_id, user_id);
+
+-- Voice Usage & Cost Metering Ledger (character-level & cache-hit tracking)
+CREATE TABLE IF NOT EXISTS voice_usage_logs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    agent_id TEXT,
+    campaign_id TEXT,
+    call_id TEXT,
+    provider TEXT NOT NULL DEFAULT 'elevenlabs',
+    model_id TEXT,
+    voice_id TEXT,
+    language TEXT NOT NULL DEFAULT 'en-IN',
+    quality_profile TEXT NOT NULL DEFAULT 'balanced',
+    characters_requested INTEGER NOT NULL DEFAULT 0,
+    provider_characters_reported INTEGER,
+    estimated_cost_paise INTEGER NOT NULL DEFAULT 0,
+    actual_cost_paise INTEGER,
+    cache_hit INTEGER NOT NULL DEFAULT 0,
+    latency_ms INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'success',
+    error_message TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_voice_usage_tenant_created ON voice_usage_logs(tenant_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_voice_usage_agent ON voice_usage_logs(tenant_id, agent_id);
 """
 
 
@@ -1036,8 +1091,30 @@ def migrate_existing_database(conn: sqlite3.Connection):
         "post_call_webhook_url": "TEXT",
         "speech_rate": "REAL DEFAULT 1.0",
         "stability": "REAL NOT NULL DEFAULT 0.6",
+        "voice_profile_id": "TEXT",
+        "tts_model_id": "TEXT",
+        "quality_profile": "TEXT NOT NULL DEFAULT 'balanced'",
+        "voice_personality": "TEXT NOT NULL DEFAULT 'professional'",
+        "voice_stability": "REAL NOT NULL DEFAULT 0.55",
+        "voice_similarity": "REAL NOT NULL DEFAULT 0.78",
+        "voice_style": "REAL NOT NULL DEFAULT 0.0",
+        "language_fallback": "TEXT NOT NULL DEFAULT 'en-IN'",
         "current_version": "INTEGER NOT NULL DEFAULT 1",
         "updated_at": "TEXT",
+    })
+
+    _safe_add_columns(cur, "voice_profiles", {
+        "model_id": "TEXT",
+        "accent": "TEXT",
+        "category": "TEXT DEFAULT 'premade'",
+        "labels_json": "TEXT NOT NULL DEFAULT '{}'",
+        "supported_models_json": "TEXT NOT NULL DEFAULT '[]'",
+        "supported_languages_json": "TEXT NOT NULL DEFAULT '[]'",
+        "preview_url": "TEXT",
+        "access_status": "TEXT NOT NULL DEFAULT 'available'",
+        "default_similarity": "REAL NOT NULL DEFAULT 0.78",
+        "default_style": "REAL NOT NULL DEFAULT 0.0",
+        "use_speaker_boost": "INTEGER NOT NULL DEFAULT 1",
     })
 
     _safe_add_columns(cur, "leads", {

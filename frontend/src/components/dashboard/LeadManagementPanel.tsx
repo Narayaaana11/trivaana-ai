@@ -310,7 +310,7 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
             <SlidersHorizontal className="w-3.5 h-3.5" />
             <span>More filters</span>
           </button>
-          <button onClick={fetchLeads} className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 cursor-pointer">
+          <button onClick={fetchLeads} aria-label="Refresh leads" className="p-2 rounded-xl bg-slate-100 hover:bg-slate-200 cursor-pointer">
             <RefreshCw className={`w-4 h-4 text-slate-600 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>

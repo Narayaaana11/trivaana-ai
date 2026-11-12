@@ -910,18 +910,47 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                     })}
                 </div>
 
-                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1">Voice Provider Override</label>
+                    <label className="block font-bold text-slate-700 mb-1">Voice Provider</label>
                     <select
-                      value={formState.provider || 'sarvam'}
+                      value={formState.provider || 'elevenlabs'}
                       onChange={(e) => setFormState({ ...formState, provider: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
                     >
+                      <option value="elevenlabs">ElevenLabs (Primary Neural)</option>
                       <option value="sarvam">Sarvam AI</option>
-                      <option value="elevenlabs">ElevenLabs (Paid/Custom Voice ID)</option>
                       <option value="openai">OpenAI TTS</option>
                       <option value="indicf5">IndicF5 Self-Hosted</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Quality / Cost Profile</label>
+                    <select
+                      value={(formState as any).quality_profile || 'balanced'}
+                      onChange={(e) => setFormState({ ...formState, quality_profile: e.target.value } as any)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+                    >
+                      <option value="economy">Economy (Lowest Cost)</option>
+                      <option value="balanced">Balanced (Default)</option>
+                      <option value="premium">Premium (Highest Fidelity)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block font-bold text-slate-700 mb-1">Voice Personality</label>
+                    <select
+                      value={(formState as any).voice_personality || 'professional'}
+                      onChange={(e) => setFormState({ ...formState, voice_personality: e.target.value } as any)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+                    >
+                      <option value="professional">Professional</option>
+                      <option value="friendly">Friendly</option>
+                      <option value="conversational">Conversational</option>
+                      <option value="warm">Warm</option>
+                      <option value="energetic">Energetic</option>
+                      <option value="calm">Calm</option>
+                      <option value="formal">Formal</option>
+                      <option value="sales_oriented">Sales-Oriented</option>
                     </select>
                   </div>
                   <div>
@@ -929,7 +958,7 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                     <input
                       value={formState.voice_id || ''}
                       onChange={(e) => setFormState({ ...formState, voice_id: e.target.value })}
-                      placeholder="e.g. meera, alloy, or custom ElevenLabs voice_id"
+                      placeholder="e.g. EXAVITQu4vr4xnSDxMaL or meera"
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
                     />
                   </div>

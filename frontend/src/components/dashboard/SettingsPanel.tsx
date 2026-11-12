@@ -24,10 +24,11 @@ interface SettingsPanelProps {
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'general' }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
-
-  useEffect(() => {
+  const [prevInitialTab, setPrevInitialTab] = useState<SettingsTab>(initialTab);
+  if (initialTab !== prevInitialTab) {
+    setPrevInitialTab(initialTab);
     setActiveTab(initialTab);
-  }, [initialTab]);
+  }
   const [workspace, setWorkspace] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [fullNameInput, setFullNameInput] = useState('');
@@ -146,10 +147,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
               <input value={workspace.gstin || ''} onChange={(e) => setWorkspace({ ...workspace, gstin: e.target.value })} placeholder="GSTIN (optional)" className="w-full px-3 py-2 rounded-xl border border-slate-200" />
               <input value={workspace.billing_email || ''} onChange={(e) => setWorkspace({ ...workspace, billing_email: e.target.value })} placeholder="Billing Email" className="w-full px-3 py-2 rounded-xl border border-slate-200" />
               <div>
-                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Low Balance Alert Threshold (INR)</label>
+                <label htmlFor="settings-low-balance-threshold" className="block text-[11px] font-semibold text-slate-500 mb-1">Low Balance Alert Threshold (INR)</label>
                 <input
+                  id="settings-low-balance-threshold"
                   type="number"
                   min={0}
+                  step={100}
                   value={Math.round((workspace.low_balance_threshold_paise ?? 50000) / 100)}
                   onChange={(e) =>
                     setWorkspace({
@@ -185,12 +188,12 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
               </h2>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">Calling Start (IST)</label>
-                  <input value={policy.calling_window_start} onChange={(e) => setPolicy({ ...policy, calling_window_start: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+                  <label htmlFor="settings-calling-start" className="block text-[11px] font-semibold text-slate-500 mb-1">Calling Start (IST)</label>
+                  <input id="settings-calling-start" value={policy.calling_window_start} onChange={(e) => setPolicy({ ...policy, calling_window_start: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-slate-500 mb-1">Calling End (IST)</label>
-                  <input value={policy.calling_window_end} onChange={(e) => setPolicy({ ...policy, calling_window_end: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+                  <label htmlFor="settings-calling-end" className="block text-[11px] font-semibold text-slate-500 mb-1">Calling End (IST)</label>
+                  <input id="settings-calling-end" value={policy.calling_window_end} onChange={(e) => setPolicy({ ...policy, calling_window_end: e.target.value })} className="w-full px-3 py-2 rounded-xl border border-slate-200" />
                 </div>
               </div>
               <label className="flex items-center gap-2 cursor-pointer">

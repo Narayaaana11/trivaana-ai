@@ -6,6 +6,7 @@ import type { PublicRoute } from './LandingPage';
 
 interface LandingNavProps {
   onEnterDashboard: () => void;
+  onStartFree?: () => void;
   onOpenSimulator: () => void;
   activeRoute?: PublicRoute;
   onNavigatePublic?: (route: PublicRoute) => void;
@@ -13,6 +14,7 @@ interface LandingNavProps {
 
 export const LandingNav: React.FC<LandingNavProps> = ({
   onEnterDashboard,
+  onStartFree,
   onOpenSimulator,
   activeRoute = 'home',
   onNavigatePublic,
@@ -152,7 +154,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({
 
           <Magnet padding={40} magnetStrength={3}>
             <button
-              onClick={onEnterDashboard}
+              onClick={onStartFree ?? onEnterDashboard}
               className="px-4 py-2 rounded-full bg-[#ff5500] hover:bg-[#ea580c] text-white font-bold text-xs flex items-center gap-1.5 transition shadow-sm shadow-[#ff5500]/25 cursor-pointer whitespace-nowrap"
             >
               <span>Start free</span>
@@ -221,7 +223,7 @@ export const LandingNav: React.FC<LandingNavProps> = ({
             <button
               onClick={() => {
                 setMobileMenuOpen(false);
-                onEnterDashboard();
+                (onStartFree ?? onEnterDashboard)();
               }}
               className="w-full py-2.5 rounded-full bg-[#ff5500] text-white font-bold text-xs flex items-center justify-center gap-2 shadow-sm"
             >

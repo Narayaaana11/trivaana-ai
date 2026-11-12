@@ -175,7 +175,24 @@ def run_worker():
         if llm_engine is None:
             llm_engine = lk_openai.LLM(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
 
-        if provider == "sarvam" and os.environ.get("SARVAM_API_KEY"):
+        if provider == "elevenlabs" and os.environ.get("ELEVENLABS_API_KEY"):
+            try:
+                from livekit.plugins import elevenlabs as lk_elevenlabs  # type: ignore
+                from services.voice_ecosystem_service import VoiceSelectionService
+
+                sel = VoiceSelectionService.select_model_and_settings(
+                    language=lang,
+                    quality_profile=metadata.get("quality_profile") or "balanced",
+                    personality=metadata.get("voice_personality") or "professional",
+                    explicit_model_id=metadata.get("tts_model_id"),
+                )
+                tts_engine = lk_elevenlabs.TTS(
+                    voice_id=voice_id or "EXAVITQu4vr4xnSDxMaL",
+                    model=sel["model_id"],
+                )
+            except ImportError:
+                logger.warning("livekit-plugins-elevenlabs not installed; falling back to default TTS.")
+        elif provider == "sarvam" and os.environ.get("SARVAM_API_KEY"):
             try:
                 from livekit.plugins import sarvam as lk_sarvam  # type: ignore
                 stt_engine = lk_sarvam.STT(language=lang)

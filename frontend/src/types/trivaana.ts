@@ -124,6 +124,14 @@ export interface Agent {
   voice_id?: string;
   voice_gender?: string;
   provider?: string;
+  voice_profile_id?: string;
+  tts_model_id?: string;
+  quality_profile?: string;
+  voice_personality?: string;
+  voice_stability?: number;
+  voice_similarity?: number;
+  voice_style?: number;
+  language_fallback?: string;
   speaking_style?: string;
   personality?: string;
   greeting_message?: string;
@@ -158,12 +166,24 @@ export interface VoiceProfile {
   name: string;
   language: string;
   gender: string;
-  quality_tier: string;
+  quality_tier?: string;
   description?: string;
-  default_speed: number;
-  default_stability: number;
-  verified_status: string;
-  provider_configured: boolean;
+  model_id?: string;
+  accent?: string;
+  category?: string;
+  labels?: Record<string, string>;
+  supported_models?: string[];
+  supported_languages?: string[];
+  preview_url?: string;
+  access_status?: string;
+  is_favorite?: boolean;
+  default_speed?: number;
+  default_stability?: number;
+  default_similarity?: number;
+  default_style?: number;
+  use_speaker_boost?: boolean;
+  verified_status?: string;
+  provider_configured?: boolean;
 }
 
 export interface KnowledgeDocument {

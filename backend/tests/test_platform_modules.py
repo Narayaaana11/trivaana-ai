@@ -89,7 +89,9 @@ def test_ai_employee_builder_prompt_versioning_and_lifecycle(client, demo_auth_h
     assert "reply" in turn.json()
 
 
-def test_voice_library_and_voice_engine_pipeline(client, demo_auth_headers):
+def test_voice_library_and_voice_engine_pipeline(client, demo_auth_headers, monkeypatch):
+    from core.config import settings
+    monkeypatch.setattr(settings, "SARVAM_API_KEY", "")
     langs = client.get("/api/voices/languages").json()["languages"]
     codes = {l["code"] for l in langs}
     assert {"en-IN", "hi-IN", "te-IN", "ta-IN", "kn-IN", "ml-IN", "mr-IN"}.issubset(codes)

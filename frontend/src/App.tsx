@@ -126,6 +126,7 @@ function AppShell() {
   const [selectedPreset, setSelectedPreset] = useState<string | undefined>(undefined);
   const [isSimulatorOpen, setIsSimulatorOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [authInitialMode, setAuthInitialMode] = useState<'login' | 'register'>('login');
   const [pendingTab, setPendingTab] = useState<DashboardTab>('overview');
 
   useEffect(() => {
@@ -141,12 +142,27 @@ function AppShell() {
     }
   }, [user, setSession]);
 
-  const handleEnterDashboard = (tab: DashboardTab = 'overview') => {
+  const resetPublicPathnameIfNeeded = () => {
+    try {
+      if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+        window.history.replaceState(null, '', `/${window.location.hash || ''}`);
+      }
+    } catch {
+      // ignore history errors in restricted environments
+    }
+  };
+
+  const handleEnterDashboard = (
+    tab: DashboardTab = 'overview',
+    authMode: 'login' | 'register' = 'login'
+  ) => {
     if (!trivaanaApi.isAuthenticated()) {
       setPendingTab(tab);
+      setAuthInitialMode(authMode);
       setIsAuthModalOpen(true);
       return;
     }
+    resetPublicPathnameIfNeeded();
     setInitialDashboardTab(tab);
     setView('dashboard');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -157,6 +173,7 @@ function AppShell() {
       .getMe()
       .then((me) => setSession(me.user || me, me.tenant || null))
       .catch(() => {});
+    resetPublicPathnameIfNeeded();
     setInitialDashboardTab(pendingTab);
     setView('dashboard');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -219,7 +236,8 @@ function AppShell() {
             // ignore
           }
         }}
-        onEnterDashboard={() => handleEnterDashboard('overview')}
+        onEnterDashboard={() => handleEnterDashboard('overview', 'login')}
+        onStartFree={() => handleEnterDashboard('overview', 'register')}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
         onSelectPreset={handleSelectPreset}
         onSelectPlan={handleSelectPlan}
@@ -283,6 +301,7 @@ function AppShell() {
 
       <AuthModal
         isOpen={isAuthModalOpen}
+        initialMode={authInitialMode}
         onClose={() => setIsAuthModalOpen(false)}
         onSuccess={handleAuthSuccess}
       />

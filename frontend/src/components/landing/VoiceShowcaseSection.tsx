@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   DotGridBackground,
   SplitText,
@@ -21,7 +21,8 @@ const VOICE_PROFILES = [
     lang: 'te-IN',
     languageLabel: 'Telugu (తెలుగు)',
     tier: 'Standard · ₹6.50/min',
-    provider: 'Sarvam Bulbul v3',
+    provider: 'ElevenLabs Multilingual v2',
+    audioUrl: '/audio/aravind.mp3',
     sample: 'నమస్కారం అండి! గేటెడ్ విల్లాస్ బ్రోచర్ గురించి కాల్ చేస్తున్నాను. ఈ శనివారం విజిట్ బుక్ చేద్దామా?',
     tone: 'Warm · Confident · Conversational',
   },
@@ -32,6 +33,7 @@ const VOICE_PROFILES = [
     languageLabel: 'Hindi (हिन्दी)',
     tier: 'Premium · ₹8.50/min',
     provider: 'ElevenLabs Flash v2.5',
+    audioUrl: '/audio/priya.mp3',
     sample: 'नमस्ते! अपोलो डेंटल क्लिनिक से प्रिया बोल रही हूँ। कल सुबह 10:30 का अपॉइंटमेंट कन्फर्म कर दूँ?',
     tone: 'Empathetic · Clear · Polite',
   },
@@ -41,7 +43,8 @@ const VOICE_PROFILES = [
     lang: 'en-IN',
     languageLabel: 'Indian English',
     tier: 'Standard · ₹6.50/min',
-    provider: 'Sarvam Neural',
+    provider: 'ElevenLabs Flash v2.5',
+    audioUrl: '/audio/rohan.mp3',
     sample: 'Hi there! Calling about your daughter’s NEET 2027 mock test scholarship slot this Sunday at 10 AM.',
     tone: 'Crisp · Energetic · Natural Indian Cadence',
   },
@@ -51,7 +54,8 @@ const VOICE_PROFILES = [
     lang: 'ta-IN',
     languageLabel: 'Tamil (தமிழ்)',
     tier: 'Premium · ₹8.50/min',
-    provider: 'Sarvam / ElevenLabs',
+    provider: 'ElevenLabs Flash v2.5',
+    audioUrl: '/audio/kavya.mp3',
     sample: 'வணக்கம்! உங்கள் வணிக கடன் தகுதி சரிபார்ப்பை 2 நிமிடங்களில் முடிக்கலாமா?',
     tone: 'Trustworthy · Measured · Multilingual',
   },
@@ -59,21 +63,76 @@ const VOICE_PROFILES = [
 
 export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEnterDashboard }) => {
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [progress, setProgress] = useState<number>(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stopAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setPlayingId(null);
+    setProgress(0);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   const togglePlay = (profile: (typeof VOICE_PROFILES)[0]) => {
-    if (!('speechSynthesis' in window)) return;
     if (playingId === profile.id) {
-      window.speechSynthesis.cancel();
-      setPlayingId(null);
+      stopAudio();
       return;
     }
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(profile.sample);
-    u.lang = profile.lang;
-    u.onend = () => setPlayingId(null);
-    u.onerror = () => setPlayingId(null);
+    stopAudio();
     setPlayingId(profile.id);
-    window.speechSynthesis.speak(u);
+    setProgress(0);
+
+    try {
+      const audio = new Audio(profile.audioUrl);
+      audioRef.current = audio;
+      audio.ontimeupdate = () => {
+        if (audio.duration && Number.isFinite(audio.duration)) {
+          setProgress(Math.min(100, Math.round((audio.currentTime / audio.duration) * 100)));
+        }
+      };
+      audio.onended = () => {
+        setPlayingId(null);
+        setProgress(0);
+        audioRef.current = null;
+      };
+      audio.onerror = () => {
+        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+          const u = new SpeechSynthesisUtterance(profile.sample);
+          u.lang = profile.lang;
+          u.onend = () => setPlayingId(null);
+          u.onerror = () => setPlayingId(null);
+          window.speechSynthesis.speak(u);
+        } else {
+          setPlayingId(null);
+        }
+      };
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch(() => {
+          audio.onerror?.(new Event('error'));
+        });
+      }
+    } catch {
+      setPlayingId(null);
+    }
   };
 
   return (
@@ -150,6 +209,15 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
                     <p className="text-xs text-[#0f0f14] bg-[#f6f6f8] p-3 rounded-xl border border-[#e4e4e9] leading-relaxed">
                       &ldquo;{vp.sample}&rdquo;
                     </p>
+
+                    {active && (
+                      <div className="w-full h-1.5 rounded-full bg-[#e4e4e9] overflow-hidden">
+                        <div
+                          className="h-full bg-[#ff5500] transition-all duration-150"
+                          style={{ width: `${Math.max(8, progress)}%` }}
+                        />
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between">
                       <VoicePill

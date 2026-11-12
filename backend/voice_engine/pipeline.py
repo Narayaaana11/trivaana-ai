@@ -103,21 +103,62 @@ class RealtimeVoicePipeline:
         llm_ms = int((time.perf_counter() - t_llm) * 1000)
         reply_text = turn_res["reply"]
 
-        # 5. TTS Synthesis (if requested and provider configured)
+        # 5. TTS Synthesis (with intelligent model selection & usage metering)
         t_tts = time.perf_counter()
         tts_provider_name = agent.get("provider", "sarvam")
         tts_provider = get_voice_provider(tts_provider_name)
         audio_b64 = None
         tts_mode = "browser_fallback"
+        tts_model_used = None
         if synthesize_audio and getattr(tts_provider, "is_configured", False):
             try:
-                voice_id = agent.get("voice_id") or "meera"
-                if telephony_audio and tts_provider_name == "elevenlabs":
-                    audio_out = tts_provider.synthesize_speech(
+                from services.voice_ecosystem_service import VoiceSelectionService, VoiceUsageService
+                voice_id = agent.get("voice_id") or ("EXAVITQu4vr4xnSDxMaL" if tts_provider_name == "elevenlabs" else "meera")
+                if tts_provider_name == "elevenlabs":
+                    selection = VoiceSelectionService.select_model_and_settings(
+                        language=detected_lang,
+                        quality_profile=agent.get("quality_profile") or "balanced",
+                        personality=agent.get("voice_personality") or "professional",
+                        speed_override=agent.get("speech_rate"),
+                        stability_override=agent.get("voice_stability"),
+                        similarity_override=agent.get("voice_similarity"),
+                        style_override=agent.get("voice_style"),
+                        explicit_model_id=agent.get("tts_model_id"),
+                        conn=conn,
+                    )
+                    tts_model_used = selection["model_id"]
+                    vs = selection["voice_settings"]
+                    audio_out, tts_meta = tts_provider.synthesize_speech(
                         text=reply_text,
                         language=detected_lang,
                         voice_id=voice_id,
-                        output_format="pcm_8000",
+                        stability=vs["stability"],
+                        similarity_boost=vs["similarity_boost"],
+                        style=vs["style"],
+                        speed=vs["speed"],
+                        use_speaker_boost=vs["use_speaker_boost"],
+                        model_id=tts_model_used,
+                        output_format="pcm_8000" if telephony_audio else None,
+                        return_metadata=True,
+                    )
+                    est_paise = VoiceSelectionService.estimate_cost_paise(
+                        len(reply_text), selection.get("cost_factor", 1.0)
+                    )
+                    VoiceUsageService.record_usage(
+                        conn=conn,
+                        tenant_id=tenant_id,
+                        provider="elevenlabs",
+                        model_id=tts_model_used,
+                        voice_id=voice_id,
+                        language=detected_lang,
+                        quality_profile=selection["quality_profile"],
+                        characters_requested=len(reply_text),
+                        cache_hit=bool(tts_meta.get("cache_hit")),
+                        latency_ms=int((time.perf_counter() - t_tts) * 1000),
+                        provider_characters_reported=tts_meta.get("provider_characters_reported"),
+                        estimated_cost_paise=est_paise,
+                        agent_id=agent.get("id"),
+                        call_id=call_id,
                     )
                 elif telephony_audio and tts_provider_name == "openai":
                     pcm_24k = tts_provider.synthesize_speech(

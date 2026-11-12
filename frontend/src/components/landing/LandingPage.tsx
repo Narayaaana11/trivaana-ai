@@ -32,6 +32,7 @@ export type PublicRoute =
 
 interface LandingPageProps {
   onEnterDashboard: () => void;
+  onStartFree?: () => void;
   onOpenSimulator: () => void;
   onSelectPreset?: (presetName: string) => void;
   onSelectPlan?: (planId: string) => void;
@@ -41,6 +42,7 @@ interface LandingPageProps {
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onEnterDashboard,
+  onStartFree,
   onOpenSimulator,
   onSelectPreset,
   onSelectPlan,
@@ -72,6 +74,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
     <div className="min-h-screen bg-[#fcfcfd] text-[#0f0f14] flex flex-col selection:bg-[#ff5500] selection:text-white">
       <LandingNav
         onEnterDashboard={onEnterDashboard}
+        onStartFree={onStartFree}
         onOpenSimulator={onOpenSimulator}
         activeRoute={activeRoute}
         onNavigatePublic={navigateRoute}

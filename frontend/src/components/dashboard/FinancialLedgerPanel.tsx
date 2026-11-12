@@ -38,14 +38,15 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
   const [topUpAmount, setTopUpAmount] = useState<number>(1000);
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'ledger' | 'invoices' | 'billing_details'>(initialSubTab);
+  const [prevInitialSubTab, setPrevInitialSubTab] = useState(initialSubTab);
+  if (initialSubTab !== prevInitialSubTab) {
+    setPrevInitialSubTab(initialSubTab);
+    setActiveSubTab(initialSubTab);
+  }
   const [pricing, setPricing] = useState<PricingCatalog | null>(null);
   const [subscriptionInfo, setSubscriptionInfo] = useState<{ plan: string; concurrency_limit: number } | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
-
-  useEffect(() => {
-    setActiveSubTab(initialSubTab);
-  }, [initialSubTab]);
 
   const tenantName = tenant?.name || '';
   const fetchBillingData = useCallback(async () => {

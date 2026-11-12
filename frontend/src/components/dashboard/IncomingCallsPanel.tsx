@@ -14,10 +14,11 @@ export const IncomingCallsPanel: React.FC<IncomingCallsPanelProps> = ({
   initialSubTab = 'overview',
 }) => {
   const [subTab, setSubTab] = useState<'overview' | 'calls' | 'messages' | 'missed'>(initialSubTab);
-
-  useEffect(() => {
+  const [prevInitialSubTab, setPrevInitialSubTab] = useState(initialSubTab);
+  if (initialSubTab !== prevInitialSubTab) {
+    setPrevInitialSubTab(initialSubTab);
     setSubTab(initialSubTab);
-  }, [initialSubTab]);
+  }
   const [numbers, setNumbers] = useState<any[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [inboundCalls, setInboundCalls] = useState<CallLog[]>([]);

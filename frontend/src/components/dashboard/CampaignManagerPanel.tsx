@@ -409,7 +409,7 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
             <div className="bg-white rounded-3xl p-4 border border-slate-200/90 space-y-2">
               <div className="flex justify-between items-center px-1 pb-2 border-b border-slate-100">
                 <span className="text-xs font-bold text-slate-600">Campaigns ({campaigns.length})</span>
-                <button onClick={() => loadData()} className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
+                <button onClick={() => loadData()} aria-label="Refresh campaigns" className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer">
                   <RefreshCw className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -595,7 +595,7 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
                 <h2 className="text-base font-black text-slate-900">Contact & Suppression Lists</h2>
                 <p className="text-slate-500">Create reusable audience lists or suppression/exclusion lists for campaigns.</p>
               </div>
-              <button onClick={() => setShowListsModal(false)} className="p-1.5 rounded-xl hover:bg-slate-100 cursor-pointer">
+              <button onClick={() => setShowListsModal(false)} aria-label="Close contact lists modal" className="p-1.5 rounded-xl hover:bg-slate-100 cursor-pointer">
                 <X className="w-4 h-4 text-slate-500" />
               </button>
             </div>

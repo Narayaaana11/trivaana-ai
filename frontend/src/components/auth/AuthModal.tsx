@@ -5,12 +5,25 @@ import { TrivaanaLogo } from '@/components/brand/TrivaanaLogo';
 
 interface AuthModalProps {
   isOpen: boolean;
+  initialMode?: 'login' | 'register';
   onClose: () => void;
   onSuccess: () => void;
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onSuccess }) => {
-  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset'>('login');
+export const AuthModal: React.FC<AuthModalProps> = ({
+  isOpen,
+  initialMode = 'login',
+  onClose,
+  onSuccess,
+}) => {
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot' | 'reset'>(initialMode);
+  const [prevOpen, setPrevOpen] = useState(isOpen);
+  if (isOpen !== prevOpen) {
+    setPrevOpen(isOpen);
+    if (isOpen) {
+      setMode(initialMode);
+    }
+  }
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [resetToken, setResetToken] = useState('');

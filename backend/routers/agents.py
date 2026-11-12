@@ -79,6 +79,14 @@ class CreateAgentRequest(BaseModel):
     post_call_webhook_url: Optional[str] = None
     speech_rate: float = 1.0
     stability: float = 0.6
+    voice_profile_id: Optional[str] = None
+    tts_model_id: Optional[str] = None
+    quality_profile: str = "balanced"
+    voice_personality: str = "professional"
+    voice_stability: float = 0.55
+    voice_similarity: float = 0.78
+    voice_style: float = 0.0
+    language_fallback: str = "en-IN"
     status: str = "active"
 
 
@@ -116,6 +124,14 @@ class UpdateAgentRequest(BaseModel):
     post_call_webhook_url: Optional[str] = None
     speech_rate: Optional[float] = None
     stability: Optional[float] = None
+    voice_profile_id: Optional[str] = None
+    tts_model_id: Optional[str] = None
+    quality_profile: Optional[str] = None
+    voice_personality: Optional[str] = None
+    voice_stability: Optional[float] = None
+    voice_similarity: Optional[float] = None
+    voice_style: Optional[float] = None
+    language_fallback: Optional[str] = None
     status: Optional[str] = None
     change_note: Optional[str] = None
 
@@ -238,8 +254,11 @@ def create_agent(
         questions_json, extraction_schema_json, qualification_criteria, appointment_requirements,
         call_ending_conditions, escalation_conditions, never_say_json, never_do_json,
         structured_config_json, calling_hours_json, caller_memory_enabled, recording_disclosure_enabled,
-        transfer_number, post_call_webhook_url, speech_rate, stability, status, current_version, created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+        transfer_number, post_call_webhook_url, speech_rate, stability,
+        voice_profile_id, tts_model_id, quality_profile, voice_personality,
+        voice_stability, voice_similarity, voice_style, language_fallback,
+        status, current_version, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
     """, (
         agent_id, tenant["id"], req.name.strip(), slug, intake_secret_hash, req.vertical,
         req.business_name or tenant["name"], req.designation, req.objective, req.calling_purpose,
@@ -250,7 +269,10 @@ def create_agent(
         req.escalation_conditions, json.dumps(req.never_say), json.dumps(req.never_do),
         json.dumps(req.structured_config), calling_hours_json, 1 if req.caller_memory_enabled else 0,
         1 if req.recording_disclosure_enabled else 0, req.transfer_number, req.post_call_webhook_url,
-        req.speech_rate, req.stability, req.status, now, now
+        req.speech_rate, req.stability,
+        req.voice_profile_id, req.tts_model_id, req.quality_profile, req.voice_personality,
+        req.voice_stability, req.voice_similarity, req.voice_style, req.language_fallback,
+        req.status, now, now
     ))
 
     # Save initial version v1
@@ -331,6 +353,14 @@ def update_agent(
         "post_call_webhook_url": req.post_call_webhook_url,
         "speech_rate": req.speech_rate,
         "stability": req.stability,
+        "voice_profile_id": req.voice_profile_id,
+        "tts_model_id": req.tts_model_id,
+        "quality_profile": req.quality_profile,
+        "voice_personality": req.voice_personality,
+        "voice_stability": req.voice_stability,
+        "voice_similarity": req.voice_similarity,
+        "voice_style": req.voice_style,
+        "language_fallback": req.language_fallback,
         "status": req.status,
     }
     for col, val in simple_map.items():

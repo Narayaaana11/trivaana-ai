@@ -29,12 +29,14 @@ import {
   Workflow,
   LifeBuoy,
   Headphones,
+  Volume2,
 } from 'lucide-react';
 import { Tenant, AnalyticsStats } from '@/types/trivaana';
 
 export type DashboardTab =
   | 'overview'
   | 'agents'
+  | 'voices'
   | 'campaigns'
   | 'instant-leads'
   | 'inbound'
@@ -94,7 +96,10 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     },
     {
       title: 'AI EMPLOYEES',
-      items: [{ id: 'agents', label: 'Your team', icon: Bot }],
+      items: [
+        { id: 'agents', label: 'Your team', icon: Bot },
+        { id: 'voices', label: 'Voice studio', icon: Volume2 },
+      ],
     },
     {
       title: 'RESULTS',

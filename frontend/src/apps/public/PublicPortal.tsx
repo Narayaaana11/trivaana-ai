@@ -5,6 +5,7 @@ interface PublicPortalProps {
   publicRoute: PublicRoute;
   onNavigatePublic: (route: PublicRoute) => void;
   onEnterDashboard: () => void;
+  onStartFree?: () => void;
   onOpenSimulator: () => void;
   onSelectPreset: (preset: string) => void;
   onSelectPlan: (planId: string) => void;

@@ -6,6 +6,7 @@ import { CampaignManagerPanel } from './CampaignManagerPanel';
 import { InstantLeadsPanel } from './InstantLeadsPanel';
 import { IncomingCallsPanel } from './IncomingCallsPanel';
 import { AgentStudioPanel } from './AgentStudioPanel';
+import { VoiceStudioPanel } from './VoiceStudioPanel';
 import { CallIntelligencePanel } from './CallIntelligencePanel';
 import { VoiceBroadcastPanel } from './VoiceBroadcastPanel';
 import { KnowledgeBasePanel } from './KnowledgeBasePanel';
@@ -65,6 +66,7 @@ interface MissionControlProps {
 const TAB_TO_HASH: Record<DashboardTab, string> = {
   overview: '#/home',
   agents: '#/employees',
+  voices: '#/voices',
   leads: '#/leads',
   appointments: '#/appointments',
   workflows: '#/workflows',
@@ -94,6 +96,7 @@ const DEEP_HASH_MAP: Record<string, ResolvedHashRoute> = {
   '#/home': { tab: 'overview' },
   '#/employees': { tab: 'agents' },
   '#/employees/new': { tab: 'agents', sub: 'new' },
+  '#/voices': { tab: 'voices' },
   '#/leads': { tab: 'leads' },
   '#/appointments': { tab: 'appointments' },
   '#/workflows': { tab: 'workflows' },
@@ -610,6 +613,9 @@ export const MissionControl: React.FC<MissionControlProps> = ({
                   initialPreset={initialPreset}
                   initialCreate={hashSubRoute === 'new'}
                 />
+              )}
+              {currentTab === 'voices' && (
+                <VoiceStudioPanel onAgentUpdated={refreshAllData} />
               )}
               {currentTab === 'campaigns' && <CampaignManagerPanel onCampaignUpdated={refreshAllData} />}
               {currentTab === 'instant-leads' && (

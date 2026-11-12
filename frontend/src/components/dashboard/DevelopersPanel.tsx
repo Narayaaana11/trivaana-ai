@@ -30,10 +30,11 @@ interface DevelopersPanelProps {
 
 export const DevelopersPanel: React.FC<DevelopersPanelProps> = ({ initialSubTab = 'overview' }) => {
   const [subTab, setSubTab] = useState<'overview' | 'keys' | 'webhooks' | 'logs'>(initialSubTab);
-
-  useEffect(() => {
+  const [prevInitialSubTab, setPrevInitialSubTab] = useState(initialSubTab);
+  if (initialSubTab !== prevInitialSubTab) {
+    setPrevInitialSubTab(initialSubTab);
     setSubTab(initialSubTab);
-  }, [initialSubTab]);
+  }
   const [agents, setAgents] = useState<Agent[]>([]);
   const [apiKeys, setApiKeys] = useState<any[]>([]);
   const [webhooks, setWebhooks] = useState<any[]>([]);

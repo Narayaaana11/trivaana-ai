@@ -36,9 +36,6 @@ def create_celery_app():
         return None
 
 
-celery_app = create_celery_app()
-
-
 def execute_delayed_intake_call(
     tenant_id: str,
     lead_id: str,
@@ -245,6 +242,9 @@ def run_worker_loop():
         except Exception as exc:
             logger.exception("Worker loop error: %s", exc)
         time.sleep(5)
+
+
+celery_app = create_celery_app()
 
 
 if __name__ == "__main__":

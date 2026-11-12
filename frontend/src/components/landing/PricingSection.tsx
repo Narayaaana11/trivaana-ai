@@ -130,27 +130,27 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
         </div>
 
         {/* 3 Tier Pricing Cards */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch max-w-7xl mx-auto">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-stretch max-w-7xl mx-auto pt-4">
           {TIERS.map((tier) => (
-            <GlareHover key={tier.id} className="rounded-3xl h-full">
-              <SpotlightCard
-                spotlightColor={tier.highlight ? 'rgba(255, 85, 0, 0.16)' : 'rgba(0, 0, 0, 0.04)'}
-                className={`h-full rounded-3xl p-8 flex flex-col justify-between transition-all relative ${
-                  tier.highlight
-                    ? 'bg-white border-2 border-orange-500 shadow-xl'
-                    : 'bg-white border border-slate-200/90 shadow-sm'
-                }`}
-              >
-              <div>
-                {tier.highlight && (
-                  <div className="absolute -top-3.5 left-1/2 -translate-x-1/2">
-                    <span className="bg-gradient-to-r from-orange-600 to-amber-600 text-white text-xs font-extrabold px-3.5 py-1 rounded-full shadow-sm uppercase tracking-wide">
-                      {tier.badge}
-                    </span>
-                  </div>
-                )}
-
-                <div className="flex justify-between items-start mb-4">
+            <div key={tier.id} className="relative h-full">
+              {tier.highlight && (
+                <div className="absolute -top-3.5 left-1/2 -translate-x-1/2 z-20 whitespace-nowrap pointer-events-none">
+                  <span className="bg-gradient-to-r from-orange-600 to-amber-600 text-white text-[11px] font-extrabold px-4 py-1.5 rounded-full shadow-md uppercase tracking-wider">
+                    {tier.badge}
+                  </span>
+                </div>
+              )}
+              <GlareHover className="rounded-3xl h-full">
+                <SpotlightCard
+                  spotlightColor={tier.highlight ? 'rgba(255, 85, 0, 0.16)' : 'rgba(0, 0, 0, 0.04)'}
+                  className={`h-full rounded-3xl p-8 pt-9 flex flex-col justify-between transition-all relative ${
+                    tier.highlight
+                      ? 'bg-white border-2 border-orange-500 shadow-xl'
+                      : 'bg-white border border-slate-200/90 shadow-sm'
+                  }`}
+                >
+                <div>
+                  <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="text-2xl font-black text-slate-900">{tier.name}</h3>
                     <p className="text-xs text-slate-500 mt-1">{tier.description}</p>
@@ -200,8 +200,9 @@ export const PricingSection: React.FC<PricingSectionProps> = ({
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
-            </SpotlightCard>
-          </GlareHover>
+              </SpotlightCard>
+            </GlareHover>
+            </div>
           ))}
         </div>
 

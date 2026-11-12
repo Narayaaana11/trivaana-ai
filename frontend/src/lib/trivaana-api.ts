@@ -254,17 +254,83 @@ export const trivaanaApi = {
     return parseJsonOrThrow(res, 'Failed to rotate intake secret');
   },
 
-  // Voices & Voice Engine
-  async getVoices(filters?: { language?: string; gender?: string; provider?: string }): Promise<{ voices: VoiceProfile[]; providers: Record<string, boolean> }> {
+  // Voices & ElevenLabs Ecosystem
+  async getVoices(filters?: {
+    language?: string;
+    gender?: string;
+    provider?: string;
+    category?: string;
+    accent?: string;
+    model_id?: string;
+    search?: string;
+    favorites_only?: boolean;
+    available_only?: boolean;
+  }): Promise<{ voices: VoiceProfile[]; count?: number; providers: Record<string, boolean> }> {
     const qs = new URLSearchParams();
     if (filters?.language) qs.set('language', filters.language);
     if (filters?.gender) qs.set('gender', filters.gender);
     if (filters?.provider) qs.set('provider', filters.provider);
+    if (filters?.category) qs.set('category', filters.category);
+    if (filters?.accent) qs.set('accent', filters.accent);
+    if (filters?.model_id) qs.set('model_id', filters.model_id);
+    if (filters?.search) qs.set('search', filters.search);
+    if (filters?.favorites_only) qs.set('favorites_only', 'true');
+    if (filters?.available_only) qs.set('available_only', 'true');
     const res = await authFetch(`${API_BASE}/voices?${qs.toString()}`);
     return parseJsonOrThrow(res, 'Failed to fetch voices');
   },
 
-  async previewVoice(payload: { voice_id: string; provider: string; language: string; text: string; speed?: number; stability?: number }): Promise<any> {
+  async getVoiceLanguages(): Promise<{ languages: any[]; count: number }> {
+    const res = await authFetch(`${API_BASE}/voices/languages`);
+    return parseJsonOrThrow(res, 'Failed to fetch supported Indian languages');
+  },
+
+  async getVoiceModels(): Promise<{ models: any[]; profiles: Record<string, string> }> {
+    const res = await authFetch(`${API_BASE}/voices/models`);
+    return parseJsonOrThrow(res, 'Failed to fetch voice models');
+  },
+
+  async getVoicePersonalities(): Promise<{ personalities: any[] }> {
+    const res = await authFetch(`${API_BASE}/voices/personalities`);
+    return parseJsonOrThrow(res, 'Failed to fetch voice personalities');
+  },
+
+  async verifyElevenLabs(): Promise<{ connected: boolean; tts_models_count?: number; reason?: string; subscription?: any }> {
+    const res = await authFetch(`${API_BASE}/voices/verify`);
+    return parseJsonOrThrow(res, 'Failed to verify ElevenLabs connection');
+  },
+
+  async syncVoiceCatalog(): Promise<{ synced: boolean; models_synced: number; voices_synced: number; reason?: string }> {
+    const res = await authFetch(`${API_BASE}/voices/sync`, { method: 'POST' });
+    return parseJsonOrThrow(res, 'Failed to sync voice catalog');
+  },
+
+  async toggleFavoriteVoice(voiceProfileId: string, favorite: boolean): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voices/${voiceProfileId}/favorite`, {
+      method: favorite ? 'POST' : 'DELETE',
+    });
+    return parseJsonOrThrow(res, 'Failed to update favorite voice');
+  },
+
+  async getVoiceUsage(days = 30): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voices/usage?days=${days}`);
+    return parseJsonOrThrow(res, 'Failed to fetch voice usage report');
+  },
+
+  async previewVoice(payload: {
+    voice_id: string;
+    provider: string;
+    language: string;
+    text: string;
+    quality_profile?: string;
+    personality?: string;
+    model_id?: string;
+    speed?: number;
+    stability?: number;
+    similarity_boost?: number;
+    style?: number;
+    agent_id?: string;
+  }): Promise<any> {
     const res = await authFetch(`${API_BASE}/voices/preview`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

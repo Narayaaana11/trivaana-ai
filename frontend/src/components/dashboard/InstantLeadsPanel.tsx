@@ -18,10 +18,11 @@ export const InstantLeadsPanel: React.FC<InstantLeadsPanelProps> = ({
   initialSubTab = 'activity',
 }) => {
   const [subTab, setSubTab] = useState<'activity' | 'analytics' | 'queue' | 'sources'>(initialSubTab);
-
-  useEffect(() => {
+  const [prevInitialSubTab, setPrevInitialSubTab] = useState(initialSubTab);
+  if (initialSubTab !== prevInitialSubTab) {
+    setPrevInitialSubTab(initialSubTab);
     setSubTab(initialSubTab);
-  }, [initialSubTab]);
+  }
   const [agents, setAgents] = useState<Agent[]>([]);
   const [calls, setCalls] = useState<CallLog[]>([]);
   const [integrations, setIntegrations] = useState<any[]>([]);
