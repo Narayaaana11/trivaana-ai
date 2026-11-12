@@ -23,6 +23,7 @@ from database.connection import get_db
 from providers.voice_adapters import (
     SARVAM_TTS_LANGUAGES,
     SUPPORTED_LANGUAGES,
+    SUPPORTED_TTS_PROVIDERS,
     VoiceProviderAuthError,
     VoiceProviderPlanError,
     VoiceProviderRateLimitError,
@@ -321,21 +322,46 @@ def preview_voice(
     tenant: dict = Depends(get_current_tenant),
 ):
     _enforce_preview_rate_limit(tenant["id"])
-    provider = get_voice_provider(req.provider)
-    configured = getattr(provider, "is_configured", False)
+    provider_name = (req.provider or "").strip().lower()
+    if provider_name not in SUPPORTED_TTS_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported voice provider '{req.provider}'. Supported providers: {', '.join(SUPPORTED_TTS_PROVIDERS)}.",
+        )
+    voice_id = (req.voice_id or "").strip()
+    if not voice_id:
+        raise HTTPException(status_code=400, detail="Voice ID cannot be empty.")
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text for synthesis cannot be empty.")
+
+    # Cross-check voice_profiles so a voice ID from one provider cannot be sent to another
+    profile_rows = db.execute(
+        "SELECT provider FROM voice_profiles WHERE provider_voice_id = ?",
+        (voice_id,),
+    ).fetchall()
+    if profile_rows:
+        matching_providers = {str(r["provider"]).lower() for r in profile_rows}
+        if provider_name not in matching_providers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Voice '{voice_id}' belongs to {', '.join(sorted(matching_providers))}, not '{provider_name}'.",
+            )
+
+    provider = get_voice_provider(provider_name)
+    configured = bool(getattr(provider, "is_configured", False))
 
     try:
-        if req.provider == "sarvam":
+        if provider_name == "sarvam":
             selection = VoiceSelectionService.select_sarvam_model_and_settings(
                 language=req.language,
                 quality_profile=req.quality_profile,
                 personality=req.personality,
-                speaker_id=req.voice_id,
+                speaker_id=voice_id,
                 speed_override=req.speed,
                 explicit_model_id=req.model_id,
                 conn=db,
             )
-        else:
+        elif provider_name == "elevenlabs":
             selection = VoiceSelectionService.select_model_and_settings(
                 language=req.language,
                 quality_profile=req.quality_profile,
@@ -347,6 +373,14 @@ def preview_voice(
                 explicit_model_id=req.model_id,
                 conn=db,
             )
+        else:
+            selection = {
+                "model_id": req.model_id or ("tts-1" if provider_name == "openai" else "indicf5"),
+                "quality_profile": req.quality_profile,
+                "personality": req.personality,
+                "cost_factor": 1.0,
+                "voice_settings": {"speed": req.speed or 1.0},
+            }
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     est_paise = VoiceSelectionService.estimate_cost_paise(len(req.text), selection["cost_factor"])
@@ -355,12 +389,12 @@ def preview_voice(
         return {
             "status": "sandbox_only",
             "configured": False,
-            "provider": req.provider,
-            "voice_id": req.voice_id,
+            "provider": provider_name,
+            "voice_id": voice_id,
             "language": req.language,
             "selection": selection,
             "estimated_cost_paise": est_paise,
-            "message": f"{req.provider.title()} API credentials are not configured. Server synthesis requires provider credentials.",
+            "message": f"{provider_name.title()} API credentials are not configured. Server synthesis requires provider credentials.",
             "audio_base64": None,
         }
 
@@ -368,12 +402,13 @@ def preview_voice(
     try:
         cache_hit = False
         reported_chars = len(req.text)
-        if req.provider == "elevenlabs":
+        meta: Dict[str, Any] = {}
+        if provider_name == "elevenlabs":
             vs = selection["voice_settings"]
             audio_bytes, meta = provider.synthesize_speech(
                 req.text,
                 language=req.language,
-                voice_id=req.voice_id,
+                voice_id=voice_id,
                 stability=vs["stability"],
                 similarity_boost=vs["similarity_boost"],
                 style=vs["style"],
@@ -384,11 +419,11 @@ def preview_voice(
             )
             cache_hit = bool(meta.get("cache_hit"))
             reported_chars = int(meta.get("provider_characters_reported") or len(req.text))
-        elif req.provider == "sarvam":
+        elif provider_name == "sarvam":
             audio_bytes, meta = provider.synthesize_speech(
                 req.text,
                 language=req.language,
-                voice_id=req.voice_id,
+                voice_id=voice_id,
                 speed=selection["voice_settings"]["speed"],
                 model_id=selection["model_id"],
                 output_audio_codec="mp3",
@@ -397,23 +432,31 @@ def preview_voice(
             )
             cache_hit = bool(meta.get("cache_hit"))
             reported_chars = int(meta.get("provider_characters_reported") or len(req.text))
-        elif req.provider == "openai":
+        elif provider_name == "openai":
             audio_bytes = provider.synthesize_speech(
                 req.text,
                 language=req.language,
-                voice_id=req.voice_id,
+                voice_id=voice_id,
                 speed=req.speed or 1.0,
             )
         else:
-            audio_bytes = provider.synthesize_speech(req.text, language=req.language, voice_id=req.voice_id)
+            audio_bytes = provider.synthesize_speech(req.text, language=req.language, voice_id=voice_id)
+
+        # Never treat empty or sandbox/placeholder bytes as successful synthesis
+        sandbox_placeholder = b"\xff\xfb\x90\x00" + req.text.encode("utf-8")
+        if meta.get("sandbox") or not audio_bytes or len(audio_bytes) <= 16 or audio_bytes == sandbox_placeholder:
+            raise HTTPException(
+                status_code=502,
+                detail=f"{provider_name.title()} did not return valid audio bytes.",
+            )
 
         latency_ms = int((time.perf_counter() - t0) * 1000)
         VoiceUsageService.record_usage(
             conn=db,
             tenant_id=tenant["id"],
-            provider=req.provider,
+            provider=provider_name,
             model_id=selection["model_id"],
-            voice_id=req.voice_id,
+            voice_id=voice_id,
             language=req.language,
             quality_profile=selection["quality_profile"],
             characters_requested=len(req.text),
@@ -427,8 +470,8 @@ def preview_voice(
         return {
             "status": "synthesized",
             "configured": True,
-            "provider": req.provider,
-            "voice_id": req.voice_id,
+            "provider": provider_name,
+            "voice_id": voice_id,
             "language": req.language,
             "model_used": selection["model_id"],
             "quality_profile": selection["quality_profile"],
@@ -442,14 +485,16 @@ def preview_voice(
             "audio_base64": base64.b64encode(audio_bytes).decode("ascii"),
             "byte_length": len(audio_bytes),
         }
+    except HTTPException:
+        raise
     except VoiceProviderPlanError as e:
         return {
             "status": "plan_upgrade_required",
             "configured": True,
             "verified": False,
             "requires_paid_plan_or_custom_voice": True,
-            "provider": req.provider,
-            "voice_id": req.voice_id,
+            "provider": provider_name,
+            "voice_id": voice_id,
             "language": req.language,
             "message": str(e),
             "audio_base64": None,

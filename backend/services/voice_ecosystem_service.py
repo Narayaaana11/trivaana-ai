@@ -17,6 +17,7 @@ from providers.voice_adapters import (
     SARVAM_MODELS,
     SARVAM_V3_SPEAKER_IDS,
     SARVAM_V4_SPEAKER_IDS,
+    SARVAM_V4_SPEAKERS_BY_ID,
     SUPPORTED_LANGUAGES,
     SarvamVoiceProvider,
     get_voice_provider,
@@ -271,7 +272,7 @@ class VoiceSelectionService:
         if profile not in ("economy", "balanced", "premium"):
             profile = "balanced"
 
-        catalog = cls.get_model_catalog(conn)
+        catalog = cls.get_model_catalog(conn, provider="elevenlabs")
 
         # Ordered candidate preference per profile — never picks an unsupported language/model pair
         preference_map = {
@@ -360,6 +361,12 @@ class VoiceSelectionService:
         spk = (speaker_id or "shubh").strip()
         if spk == "meera":
             spk = "priya"
+        if spk not in SARVAM_V3_SPEAKER_IDS and spk not in SARVAM_V4_SPEAKER_IDS:
+            raise ValueError(f"Unknown Sarvam AI voice/speaker '{spk}'.")
+        if spk in SARVAM_V4_SPEAKERS_BY_ID:
+            allowed_langs = SARVAM_V4_SPEAKERS_BY_ID[spk].get("langs") or []
+            if language not in allowed_langs:
+                raise ValueError(f"Sarvam speaker '{spk}' only supports {', '.join(allowed_langs)}, not '{language}'.")
 
         catalog = cls.get_model_catalog(conn, provider="sarvam")
         if explicit_model_id:

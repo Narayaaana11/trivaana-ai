@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Volume2,
   Play,
@@ -22,6 +22,8 @@ import type { Agent } from '@/types/trivaana';
 interface VoiceStudioPanelProps {
   onAgentUpdated?: () => void;
 }
+
+const PREVIEW_MAX_CHARS = 1500;
 
 const SHOWCASE_ALIAS_BY_VOICE_ID: Record<string, string> = {
   EXAVITQu4vr4xnSDxMaL: 'Priya (Hindi)',
@@ -77,7 +79,7 @@ const SAMPLE_PHRASES: Record<string, { native: string; romanized: string; codeSw
     codeSwitch: 'Hello sir, SG Highway showroom ma tomorrow 4 PM test drive book kariye?',
   },
   'pa-IN': {
-    native: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਤ੍ਰਿਵਾਨਾ ਏਆਈ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?',
+    native: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਤ੍ਰਿਵਾਨਾ ਏਆਈ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾગਤ ਹੈ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?',
     romanized: 'Sat Sri Akal! Trivaana AI vich tuhada swagat hai. Ajj main tuhadi ki madad kar sakdi haan?',
     codeSwitch: 'Hello sir, Mohali office vich kal 11 AM appointment confirm kar daiye?',
   },
@@ -98,6 +100,135 @@ const SAMPLE_PHRASES: Record<string, { native: string; romanized: string; codeSw
   },
 };
 
+function formatProviderLabel(provider?: string): string {
+  if (provider === 'sarvam') return 'Sarvam AI';
+  if (provider === 'elevenlabs') return 'ElevenLabs';
+  return provider ? provider.toUpperCase() : 'Unknown';
+}
+
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+function isModelTts(model: any): boolean {
+  return model?.can_do_tts !== false && model?.availability_status !== 'restricted';
+}
+
+function isModelCompatibleWithLanguage(model: any, langCode: string): boolean {
+  if (!isModelTts(model)) return false;
+  const iso = (langCode || 'en-IN').split('-')[0].toLowerCase();
+  const langs: string[] = model?.languages || [];
+  return langs.includes(iso) || langs.includes(langCode) || (langCode === 'or-IN' && langs.includes('od-IN'));
+}
+
+function isVoiceCompatibleWithLanguage(voice: any, langCode: string): boolean {
+  if (!voice) return false;
+  const supported: string[] = voice.supported_languages || [];
+  if (supported.length > 0) {
+    return supported.includes(langCode);
+  }
+  return !voice.language || voice.language === langCode;
+}
+
+function isModelCompatibleWithVoice(model: any, voice: any): boolean {
+  if (!model || !voice) return false;
+  if (model.provider && voice.provider && model.provider !== voice.provider) {
+    return false;
+  }
+  if (voice.provider === 'sarvam') {
+    const voiceModels: string[] = voice.supported_models || (voice.model_id ? [voice.model_id] : []);
+    if (voiceModels.length > 0 && !voiceModels.includes(model.model_id)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getVoicePlayability(
+  voice: any,
+  langCode: string,
+  explicitModelId: string,
+  models: any[],
+): { playable: boolean; reason?: string } {
+  if (!voice) {
+    return { playable: false, reason: 'Select a voice first.' };
+  }
+  if (voice.access_status === 'plan_upgrade_required') {
+    return { playable: false, reason: 'Requires a paid provider plan.' };
+  }
+  if (voice.provider_configured === false) {
+    return {
+      playable: false,
+      reason: `${formatProviderLabel(voice.provider)} credentials are not configured.`,
+    };
+  }
+  if (!isVoiceCompatibleWithLanguage(voice, langCode)) {
+    return {
+      playable: false,
+      reason: `${voice.name} does not support ${langCode}.`,
+    };
+  }
+  if (explicitModelId && explicitModelId !== 'auto') {
+    const model = models.find((m) => m.model_id === explicitModelId);
+    if (!model) {
+      return { playable: false, reason: `Model ${explicitModelId} is not in the catalog.` };
+    }
+    if (!isModelTts(model)) {
+      return { playable: false, reason: `${model.model_id} is STT-only / non-TTS.` };
+    }
+    if (model.provider && voice.provider && model.provider !== voice.provider) {
+      return {
+        playable: false,
+        reason: `Model ${model.model_id} (${formatProviderLabel(model.provider)}) cannot be used with ${formatProviderLabel(voice.provider)} voices.`,
+      };
+    }
+    if (!isModelCompatibleWithLanguage(model, langCode)) {
+      return {
+        playable: false,
+        reason: `Model ${model.model_id} does not support ${langCode}.`,
+      };
+    }
+    if (!isModelCompatibleWithVoice(model, voice)) {
+      const allowed = (voice.supported_models || (voice.model_id ? [voice.model_id] : [])).join(', ');
+      return {
+        playable: false,
+        reason: `${voice.name} requires ${allowed || 'a compatible model'}.`,
+      };
+    }
+  } else if (models.length > 0) {
+    const providerModels = models.filter((m) => !m.provider || m.provider === voice.provider);
+    if (providerModels.length > 0) {
+      const anyCompatible = providerModels.some(
+        (m) => isModelCompatibleWithLanguage(m, langCode) && isModelCompatibleWithVoice(m, voice),
+      );
+      if (!anyCompatible) {
+        return {
+          playable: false,
+          reason: `No ${formatProviderLabel(voice.provider)} TTS model supports ${langCode}.`,
+        };
+      }
+    }
+  }
+  return { playable: true };
+}
+
+function base64ToAudioSrc(base64: string, contentType: string): { src: string; isObjectUrl: boolean } {
+  const mime = contentType || 'audio/mpeg';
+  if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && typeof atob === 'function') {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    const blob = new Blob([bytes], { type: mime });
+    return { src: URL.createObjectURL(blob), isObjectUrl: true };
+  }
+  return { src: `data:${mime};base64,${base64}`, isObjectUrl: false };
+}
+
 export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdated }) => {
   const [voices, setVoices] = useState<any[]>([]);
   const [languages, setLanguages] = useState<any[]>([]);
@@ -108,7 +239,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
   const [verifyStatus, setVerifyStatus] = useState<any>(null);
 
   const [selectedLang, setSelectedLang] = useState('te-IN');
-  const [providerFilter, setProviderFilter] = useState<'all' | 'elevenlabs' | 'sarvam'>('sarvam');
+  const [providerFilter, setProviderFilter] = useState<'all' | 'elevenlabs' | 'sarvam'>('all');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
@@ -129,10 +260,59 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
   const [synthesizingId, setSynthesizingId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [isPaused, setIsPaused] = useState(false);
-  const [nowPlayingInfo, setNowPlayingInfo] = useState<{ voiceName: string; modelId: string } | null>(null);
+  const [playbackProgress, setPlaybackProgress] = useState<{ currentTime: number; duration: number }>({
+    currentTime: 0,
+    duration: 0,
+  });
+  const [nowPlayingInfo, setNowPlayingInfo] = useState<{
+    voiceId: string;
+    voiceName: string;
+    provider: string;
+    modelId: string;
+  } | null>(null);
   const [lastPreviewMeta, setLastPreviewMeta] = useState<any>(null);
+  const [voiceErrors, setVoiceErrors] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const objectUrlRef = useRef<string | null>(null);
+  const requestSeqRef = useRef(0);
+  const isMountedRef = useRef(true);
+
+  const cleanupAudio = useCallback(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.onended = null;
+      audio.onerror = null;
+      audio.ontimeupdate = null;
+      audio.onloadedmetadata = null;
+      audio.ondurationchange = null;
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch {
+        // Ignore media reset errors in non-browser test environments
+      }
+      audioRef.current = null;
+    }
+    if (objectUrlRef.current && typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function') {
+      URL.revokeObjectURL(objectUrlRef.current);
+      objectUrlRef.current = null;
+    }
+  }, []);
+
+  const stopPlayback = useCallback((invalidatePending = true) => {
+    if (invalidatePending) {
+      requestSeqRef.current += 1;
+    }
+    cleanupAudio();
+    if (isMountedRef.current) {
+      setPlayingId(null);
+      setIsPaused(false);
+      setNowPlayingInfo(null);
+      setPlaybackProgress({ currentTime: 0, duration: 0 });
+    }
+  }, [cleanupAudio]);
 
   const loadStudio = useCallback(async () => {
     try {
@@ -154,6 +334,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
         trivaanaApi.getVoiceUsage(30),
         trivaanaApi.verifyElevenLabs(),
       ]);
+      if (!isMountedRef.current) return;
       const list = vRes.voices || [];
       setVoices(list);
       setLanguages(lRes.languages || []);
@@ -163,31 +344,37 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
       setUsage(uRes);
       setVerifyStatus(verRes);
       if (list.length > 0 && !selectedVoice) {
-        const firstAvail = list.find((v: any) => v.access_status !== 'plan_upgrade_required') || list[0];
+        const firstAvail =
+          list.find((v: any) => v.access_status !== 'plan_upgrade_required' && v.provider_configured !== false) ||
+          list[0];
         setSelectedVoice(firstAvail);
       }
       if ((aRes.agents || []).length > 0 && !selectedAgentId) {
         setSelectedAgentId(aRes.agents[0].id);
       }
     } catch (err: any) {
-      setFeedback({ type: 'error', message: err.message || 'Failed to load Voice Studio.' });
+      if (isMountedRef.current) {
+        setFeedback({ type: 'error', message: err.message || 'Failed to load Voice Studio.' });
+      }
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) {
+        setLoading(false);
+      }
     }
   }, [selectedLang, providerFilter, categoryFilter, genderFilter, accentFilter, selectedModelId, search, favoritesOnly, selectedVoice, selectedAgentId]);
 
   useEffect(() => {
-    loadStudio();
-  }, [loadStudio]);
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      requestSeqRef.current += 1;
+      cleanupAudio();
+    };
+  }, [cleanupAudio]);
 
   useEffect(() => {
-    return () => {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-    };
-  }, []);
+    loadStudio();
+  }, [loadStudio]);
 
   const handleSyncCatalog = async () => {
     setSyncing(true);
@@ -197,8 +384,8 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
       setFeedback({
         type: res.synced ? 'success' : 'error',
         message: res.synced
-          ? `Synced ${res.voices_synced} ElevenLabs voices and ${res.models_synced} speech models.`
-          : res.reason || 'ElevenLabs sync skipped.',
+          ? `Synced ${res.voices_synced} voices and ${res.models_synced} speech models.`
+          : res.reason || 'Catalog sync skipped.',
       });
       await loadStudio();
     } catch (err: any) {
@@ -208,23 +395,19 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     }
   };
 
-  const stopPlayback = () => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current = null;
-    }
-    setPlayingId(null);
-    setIsPaused(false);
-    setNowPlayingInfo(null);
-  };
-
   const togglePauseResume = () => {
     if (!audioRef.current) return;
     if (isPaused) {
-      audioRef.current.play().then(() => setIsPaused(false)).catch(() => {
-        setFeedback({ type: 'error', message: 'Unable to resume audio playback.' });
-      });
+      audioRef.current
+        .play()
+        .then(() => {
+          if (isMountedRef.current) setIsPaused(false);
+        })
+        .catch(() => {
+          if (isMountedRef.current) {
+            setFeedback({ type: 'error', message: 'Unable to resume audio playback.' });
+          }
+        });
     } else {
       audioRef.current.pause();
       setIsPaused(true);
@@ -232,14 +415,60 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
   };
 
   const handlePreviewVoice = async (voice: any, modelOverride?: string) => {
+    if (!voice) return;
     if (playingId === voice.id && !modelOverride) {
       stopPlayback();
       return;
     }
+    if (synthesizingId === voice.id && !modelOverride) {
+      return;
+    }
+
+    const trimmedText = testText.trim();
+    if (!trimmedText) {
+      const msg = 'Please enter sample text before generating audio.';
+      setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+      setFeedback({ type: 'error', message: msg });
+      return;
+    }
+
+    const modelToUse = modelOverride || (selectedModelId !== 'auto' ? selectedModelId : undefined);
+    const targetModelSpec = modelToUse ? models.find((m) => m.model_id === modelToUse) : undefined;
+    const maxChars = Math.min(
+      PREVIEW_MAX_CHARS,
+      Number(targetModelSpec?.max_chars_subscribed || PREVIEW_MAX_CHARS),
+    );
+    if (testText.length > maxChars) {
+      const msg = `Sample text exceeds the ${maxChars.toLocaleString()}-character limit (${testText.length} chars).`;
+      setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+      setFeedback({ type: 'error', message: msg });
+      return;
+    }
+
+    const compatibility = getVoicePlayability(
+      voice,
+      selectedLang,
+      modelToUse || 'auto',
+      models,
+    );
+    if (!compatibility.playable) {
+      const msg = compatibility.reason || 'This voice, language, and model combination is not supported.';
+      setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+      setFeedback({ type: 'error', message: msg });
+      return;
+    }
+
     stopPlayback();
+    const mySeq = ++requestSeqRef.current;
     setSynthesizingId(voice.id);
     setFeedback(null);
-    const modelToUse = modelOverride || (selectedModelId !== 'auto' ? selectedModelId : undefined);
+    setVoiceErrors((prev) => {
+      if (!prev[voice.id]) return prev;
+      const next = { ...prev };
+      delete next[voice.id];
+      return next;
+    });
+
     try {
       const res = await trivaanaApi.previewVoice({
         voice_id: voice.provider_voice_id,
@@ -251,32 +480,99 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
         model_id: modelToUse,
         speed,
       });
+
+      if (!isMountedRef.current || requestSeqRef.current !== mySeq) {
+        return;
+      }
+
       if (res.status === 'plan_upgrade_required') {
-        setFeedback({ type: 'error', message: res.message || 'This voice requires a paid ElevenLabs plan.' });
+        const msg = res.message || 'This voice requires a paid provider plan.';
+        setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+        setFeedback({ type: 'error', message: msg });
+        return;
+      }
+      if (res.status === 'sandbox_only' || res.configured === false) {
+        const msg = res.message || `${formatProviderLabel(voice.provider)} credentials are not configured.`;
+        setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+        setFeedback({ type: 'error', message: msg });
         return;
       }
       if (!res.audio_base64) {
-        setFeedback({ type: 'error', message: res.message || 'No audio returned by ElevenLabs.' });
+        const msg = res.message || `No audio returned by ${formatProviderLabel(voice.provider)}.`;
+        setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+        setFeedback({ type: 'error', message: msg });
         return;
       }
-      setLastPreviewMeta(res);
-      setNowPlayingInfo({ voiceName: voice.name, modelId: res.model_used || modelToUse || 'eleven_v4_turbo' });
-      const audio = new Audio(`data:${res.content_type || 'audio/mpeg'};base64,${res.audio_base64}`);
+
+      const { src, isObjectUrl } = base64ToAudioSrc(res.audio_base64, res.content_type || 'audio/mpeg');
+      if (isObjectUrl) {
+        objectUrlRef.current = src;
+      }
+      const audio = new Audio(src);
       audioRef.current = audio;
+
+      const resolvedModel = res.model_used || modelToUse || '';
+      setLastPreviewMeta(res);
+      setNowPlayingInfo({
+        voiceId: voice.id,
+        voiceName: voice.name,
+        provider: res.provider || voice.provider,
+        modelId: resolvedModel,
+      });
       setPlayingId(voice.id);
       setIsPaused(false);
-      audio.onended = () => stopPlayback();
+      setPlaybackProgress({ currentTime: 0, duration: Number.isFinite(audio.duration) ? audio.duration : 0 });
+
+      audio.onloadedmetadata = () => {
+        if (!isMountedRef.current || audioRef.current !== audio) return;
+        setPlaybackProgress({
+          currentTime: audio.currentTime || 0,
+          duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+        });
+      };
+      audio.ondurationchange = () => {
+        if (!isMountedRef.current || audioRef.current !== audio) return;
+        setPlaybackProgress((prev) => ({
+          ...prev,
+          duration: Number.isFinite(audio.duration) ? audio.duration : prev.duration,
+        }));
+      };
+      audio.ontimeupdate = () => {
+        if (!isMountedRef.current || audioRef.current !== audio) return;
+        setPlaybackProgress({
+          currentTime: audio.currentTime || 0,
+          duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+        });
+      };
+      audio.onended = () => {
+        if (audioRef.current === audio) {
+          stopPlayback();
+        }
+      };
       audio.onerror = () => {
-        setFeedback({ type: 'error', message: `Audio element failed to decode ElevenLabs output for ${voice.name}.` });
+        if (!isMountedRef.current || audioRef.current !== audio) return;
+        const msg = `Audio playback failed to decode ${formatProviderLabel(voice.provider)} output for ${voice.name}.`;
+        setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+        setFeedback({ type: 'error', message: msg });
         stopPlayback();
       };
+
       await audio.play();
-      trivaanaApi.getVoiceUsage(30).then(setUsage).catch(() => {});
+      trivaanaApi.getVoiceUsage(30).then((u) => {
+        if (isMountedRef.current) setUsage(u);
+      }).catch(() => {});
     } catch (err: any) {
-      stopPlayback();
-      setFeedback({ type: 'error', message: err.message || 'Voice preview failed.' });
+      if (!isMountedRef.current || requestSeqRef.current !== mySeq) {
+        return;
+      }
+      stopPlayback(false);
+      const msg = err?.message || 'Voice preview failed.';
+      setVoiceErrors((prev) => ({ ...prev, [voice.id]: msg }));
+      setFeedback({ type: 'error', message: msg });
     } finally {
-      setSynthesizingId(null);
+      if (isMountedRef.current && requestSeqRef.current === mySeq) {
+        setSynthesizingId(null);
+      }
     }
   };
 
@@ -289,14 +585,38 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     }
   };
 
+  const activeLangInfo = languages.find((l) => l.code === selectedLang);
+  const samplePack = SAMPLE_PHRASES[selectedLang] || SAMPLE_PHRASES['en-IN'];
+
+  const resolvedAssignedModelId = useMemo(() => {
+    if (!selectedVoice) return undefined;
+    if (selectedModelId !== 'auto') return selectedModelId;
+    if (selectedVoice.provider === 'sarvam') {
+      return (selectedVoice.supported_models && selectedVoice.supported_models[0]) || selectedVoice.model_id || 'bulbul:v3';
+    }
+    const recommended =
+      qualityProfile === 'economy'
+        ? activeLangInfo?.recommended_economy_model
+        : qualityProfile === 'premium'
+        ? activeLangInfo?.recommended_premium_model
+        : activeLangInfo?.recommended_balanced_model;
+    return recommended || selectedVoice.model_id || 'eleven_v4_turbo';
+  }, [selectedVoice, selectedModelId, qualityProfile, activeLangInfo]);
+
   const handleAssignToAgent = async () => {
     if (!selectedVoice || !selectedAgentId) return;
+    const compat = getVoicePlayability(selectedVoice, selectedLang, selectedModelId, models);
+    if (!compat.playable && compat.reason && !compat.reason.includes('credentials')) {
+      setFeedback({ type: 'error', message: `Cannot assign incompatible configuration: ${compat.reason}` });
+      return;
+    }
     try {
       const pCfg = personalities.find((p) => p.id === personality);
       await trivaanaApi.updateAgent(selectedAgentId, {
         provider: selectedVoice.provider || 'elevenlabs',
         voice_id: selectedVoice.provider_voice_id,
         voice_profile_id: selectedVoice.id,
+        tts_model_id: resolvedAssignedModelId,
         voice_model: selectedVoice.name,
         voice_gender: selectedVoice.gender,
         language: selectedLang,
@@ -306,11 +626,11 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
         voice_stability: pCfg?.stability ?? 0.55,
         voice_similarity: pCfg?.similarity_boost ?? 0.78,
         voice_style: pCfg?.style ?? 0.05,
-        change_note: `Assigned ${selectedVoice.name} (${qualityProfile}/${personality}) from Voice Studio`,
+        change_note: `Assigned ${selectedVoice.name} (${resolvedAssignedModelId || qualityProfile}/${personality}) from Voice Studio`,
       });
       setFeedback({
         type: 'success',
-        message: `Assigned "${selectedVoice.name}" (${qualityProfile} · ${personality}) to selected AI Employee.`,
+        message: `Assigned "${selectedVoice.name}" (${resolvedAssignedModelId || qualityProfile} · ${personality}) to selected AI Employee.`,
       });
       onAgentUpdated?.();
     } catch (err: any) {
@@ -318,8 +638,57 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     }
   };
 
-  const activeLangInfo = languages.find((l) => l.code === selectedLang);
-  const samplePack = SAMPLE_PHRASES[selectedLang] || SAMPLE_PHRASES['en-IN'];
+  const selectorModels = useMemo(() => {
+    const activeProvider = providerFilter !== 'all' ? providerFilter : selectedVoice?.provider || '';
+    return models.filter((m) => {
+      if (!isModelTts(m)) return false;
+      if (activeProvider && m.provider && m.provider !== activeProvider) return false;
+      return true;
+    });
+  }, [models, providerFilter, selectedVoice]);
+
+  const visibleCatalogModels = useMemo(() => {
+    if (providerFilter === 'all') return models;
+    return models.filter((m) => !m.provider || m.provider === providerFilter);
+  }, [models, providerFilter]);
+
+  const selectedVoiceCompat = useMemo(() => {
+    if (!selectedVoice) return { playable: false, reason: 'Select a voice to audition.' };
+    return getVoicePlayability(selectedVoice, selectedLang, selectedModelId, models);
+  }, [selectedVoice, selectedLang, selectedModelId, models]);
+
+  const compareVoiceCompat = useMemo(() => {
+    if (!compareVoice) return { playable: false, reason: '' };
+    return getVoicePlayability(compareVoice, selectedLang, selectedModelId, models);
+  }, [compareVoice, selectedLang, selectedModelId, models]);
+
+  const activeModelDisplay = useMemo(() => {
+    if (selectedModelId !== 'auto') return selectedModelId;
+    if (selectedVoice?.provider === 'sarvam') {
+      return (selectedVoice.supported_models && selectedVoice.supported_models[0]) || selectedVoice.model_id || 'bulbul:v3';
+    }
+    if (providerFilter === 'sarvam') {
+      return qualityProfile === 'economy' ? 'bulbul:v4-flash' : 'bulbul:v3';
+    }
+    return qualityProfile === 'economy'
+      ? activeLangInfo?.recommended_economy_model || 'eleven_flash_v2_5'
+      : qualityProfile === 'premium'
+      ? activeLangInfo?.recommended_premium_model || 'eleven_v4'
+      : activeLangInfo?.recommended_balanced_model || 'eleven_v4_turbo';
+  }, [selectedModelId, selectedVoice, providerFilter, qualityProfile, activeLangInfo]);
+
+  const textError = useMemo(() => {
+    if (!testText.trim()) return 'Enter sample text to synthesize audio.';
+    if (testText.length > PREVIEW_MAX_CHARS) {
+      return `Sample text exceeds ${PREVIEW_MAX_CHARS.toLocaleString()} characters.`;
+    }
+    return null;
+  }, [testText]);
+
+  const progressPct =
+    playbackProgress.duration > 0
+      ? Math.min(100, Math.max(0, (playbackProgress.currentTime / playbackProgress.duration) * 100))
+      : 0;
 
   return (
     <div className="space-y-6">
@@ -390,13 +759,14 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
       {feedback && (
         <div
+          role="alert"
           className={`p-3 rounded-2xl border text-xs font-semibold flex items-center gap-2 ${
             feedback.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
               : 'bg-red-50 border-red-200 text-red-800'
           }`}
         >
-          {feedback.type === 'success' ? <CheckCircle2 className="w-4 h-4" /> : <ShieldAlert className="w-4 h-4" />}
+          {feedback.type === 'success' ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <ShieldAlert className="w-4 h-4 shrink-0" />}
           <span>{feedback.message}</span>
         </div>
       )}
@@ -426,13 +796,9 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
             <div className="text-[10px] text-slate-400">Avg latency: {usage.avg_latency_ms || 0} ms</div>
           </div>
           <div className="bg-white rounded-2xl p-4 border border-slate-200/90">
-            <div className="text-[11px] text-slate-500 font-semibold">Active Language Model</div>
+            <div className="text-[11px] text-slate-500 font-semibold">Active TTS Model</div>
             <div className="text-sm font-extrabold text-slate-900 mt-1 font-mono truncate">
-              {qualityProfile === 'economy'
-                ? activeLangInfo?.recommended_economy_model || 'eleven_flash_v2_5'
-                : qualityProfile === 'premium'
-                ? activeLangInfo?.recommended_premium_model || 'eleven_v4'
-                : activeLangInfo?.recommended_balanced_model || 'eleven_v4_turbo'}
+              {activeModelDisplay}
             </div>
             <div className="text-[10px] text-slate-400 capitalize">{qualityProfile} profile · {selectedLang}</div>
           </div>
@@ -451,6 +817,15 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
               setSelectedLang(lang);
               const p = SAMPLE_PHRASES[lang];
               if (p) setTestText(p.native);
+              if (selectedModelId !== 'auto') {
+                const mod = models.find((m) => m.model_id === selectedModelId);
+                if (mod && !isModelCompatibleWithLanguage(mod, lang)) {
+                  setSelectedModelId('auto');
+                }
+              }
+              if (selectedVoice && !isVoiceCompatibleWithLanguage(selectedVoice, lang)) {
+                setSelectedVoice(null);
+              }
             }}
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
           >
@@ -490,8 +865,8 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
           >
             <option value="all">All Providers</option>
-            <option value="sarvam">Sarvam AI (Bulbul v3 / v4-flash)</option>
             <option value="elevenlabs">ElevenLabs</option>
+            <option value="sarvam">Sarvam AI</option>
           </select>
         </div>
         <div>
@@ -503,9 +878,11 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
           >
             <option value="">All Categories</option>
-            <option value="premade">Premade (Included)</option>
+            <option value="premade">Premade (ElevenLabs)</option>
             <option value="professional">Professional Library</option>
             <option value="cloned">Custom Cloned</option>
+            <option value="bulbul_v3">Sarvam Bulbul v3</option>
+            <option value="regional_flash">Sarvam Bulbul v4 Flash</option>
           </select>
         </div>
         <div>
@@ -531,16 +908,20 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
           >
             <option value="">All Accents</option>
+            <option value="pan-indian">Pan-Indian</option>
+            <option value="south-indian">South Indian</option>
+            <option value="west-indian">West Indian</option>
+            <option value="east-indian">East Indian</option>
+            <option value="indian">Indian</option>
             <option value="american">American</option>
             <option value="british">British</option>
             <option value="australian">Australian</option>
-            <option value="indian">Indian</option>
             <option value="standard">Standard</option>
           </select>
         </div>
         <div>
           <label htmlFor="vs-model" className="block font-bold text-slate-700 mb-1">
-            {selectedVoice?.provider === 'sarvam' || providerFilter === 'sarvam' ? 'Sarvam TTS Model' : 'TTS Model'}
+            {providerFilter === 'sarvam' ? 'Sarvam TTS Model' : providerFilter === 'elevenlabs' ? 'ElevenLabs TTS Model' : 'TTS Model'}
           </label>
           <select
             id="vs-model"
@@ -549,23 +930,25 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
             className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
           >
             <option value="auto">Auto (By Quality Profile)</option>
-            {models
-              .filter((m) => {
-                if (m.can_do_tts === false || m.availability_status === 'restricted') return false;
-                const activeProvider = providerFilter !== 'all' ? providerFilter : (selectedVoice?.provider || '');
-                if (activeProvider && m.provider && m.provider !== activeProvider) return false;
-                return true;
-              })
-              .map((m) => {
-                const iso = selectedLang.split('-')[0].toLowerCase();
-                const langs: string[] = m.languages || [];
-                const langOk = langs.includes(iso) || langs.includes(selectedLang) || (selectedLang === 'or-IN' && langs.includes('od-IN'));
-                return (
-                  <option key={`${m.provider || 'elevenlabs'}-${m.model_id}`} value={m.model_id}>
-                    {m.model_id} {!langOk ? `(Unsupported for ${selectedLang})` : ''}
-                  </option>
-                );
-              })}
+            {selectorModels.map((m) => {
+              const langOk = isModelCompatibleWithLanguage(m, selectedLang);
+              const voiceOk = !selectedVoice || providerFilter !== 'all' ? true : isModelCompatibleWithVoice(m, selectedVoice);
+              const canUse = langOk && voiceOk;
+              const reason = !langOk
+                ? `Unsupported for ${selectedLang}`
+                : !voiceOk
+                ? `Incompatible with ${selectedVoice?.name}`
+                : '';
+              return (
+                <option
+                  key={`${m.provider || 'elevenlabs'}-${m.model_id}`}
+                  value={m.model_id}
+                  disabled={!canUse}
+                >
+                  {m.model_id} {reason ? `(${reason})` : ''}
+                </option>
+              );
+            })}
           </select>
         </div>
         <div>
@@ -618,17 +1001,29 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
           </div>
 
           {loading ? (
-            <div className="py-12 text-center text-xs text-slate-500">Loading ElevenLabs &amp; Indian voice catalog...</div>
+            <div className="py-12 text-center text-xs text-slate-500">Loading ElevenLabs &amp; Sarvam AI voice catalog...</div>
           ) : voices.length === 0 ? (
             <div className="py-10 text-center space-y-2 text-xs text-slate-500">
-              <p>No voices matched your filters yet. Click &ldquo;Refresh Catalogue&rdquo; to sync live ElevenLabs voices.</p>
+              <p>No voices matched your filters. Try switching provider or language, or click &ldquo;Refresh Catalogue&rdquo;.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[560px] overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[600px] overflow-y-auto pr-1">
               {voices.map((v) => {
                 const isSelected = selectedVoice?.id === v.id;
                 const isPlaying = playingId === v.id;
+                const isGenerating = synthesizingId === v.id;
                 const restricted = v.access_status === 'plan_upgrade_required';
+                const unconfigured = v.provider_configured === false;
+                const compat = getVoicePlayability(v, selectedLang, selectedModelId, models);
+                const playDisabled = isGenerating || (!isPlaying && (!compat.playable || Boolean(textError)));
+                const cardError = voiceErrors[v.id];
+                const supportedModelsList: string[] = v.supported_models?.length
+                  ? v.supported_models
+                  : v.model_id
+                  ? [v.model_id]
+                  : [];
+                const supportedLangsList: string[] = v.supported_languages || [];
+
                 return (
                   <div
                     key={v.id}
@@ -647,11 +1042,13 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                             </span>
                           )}
                         </div>
-                        <div className="text-[10px] font-mono text-slate-400 truncate">{v.provider_voice_id}</div>
+                        <div className="text-[10px] font-mono text-slate-400 truncate" title={v.provider_voice_id}>
+                          ID: {v.provider_voice_id}
+                        </div>
                       </div>
                       <button
                         type="button"
-                        aria-label={v.is_favorite ? 'Remove from favorites' : 'Save to favorites'}
+                        aria-label={v.is_favorite ? `Remove ${v.name} from favorites` : `Save ${v.name} to favorites`}
                         onClick={(e) => {
                           e.stopPropagation();
                           handleToggleFavorite(v);
@@ -663,12 +1060,18 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                     </div>
 
                     <div className="flex flex-wrap gap-1 text-[10px]">
-                      <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 font-semibold text-slate-700 uppercase">
-                        {v.provider}
+                      <span
+                        className={`px-2 py-0.5 rounded-full border font-bold ${
+                          v.provider === 'sarvam'
+                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                            : 'bg-white border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {formatProviderLabel(v.provider)}
                       </span>
-                      {v.category && (
+                      {v.gender && (
                         <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 capitalize">
-                          {v.category}
+                          {v.gender}
                         </span>
                       )}
                       {v.accent && (
@@ -676,34 +1079,105 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                           {v.accent}
                         </span>
                       )}
+                      {v.category && (
+                        <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-slate-600 capitalize">
+                          {v.category.replace(/_/g, ' ')}
+                        </span>
+                      )}
                       <span
                         className={`px-2 py-0.5 rounded-full font-bold ${
-                          restricted ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-700'
+                          restricted || unconfigured
+                            ? 'bg-amber-100 text-amber-800'
+                            : 'bg-emerald-100 text-emerald-700'
                         }`}
                       >
-                        {restricted ? 'Paid Plan Required' : 'Available'}
+                        {restricted ? 'Paid Plan Required' : unconfigured ? 'Not Configured' : 'Available'}
                       </span>
                     </div>
 
-                    <div className="flex items-center justify-between pt-1 border-t border-slate-200/70">
-                      <button
-                        type="button"
-                        disabled={restricted || synthesizingId === v.id}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handlePreviewVoice(v);
-                        }}
-                        className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40"
-                      >
-                        {synthesizingId === v.id ? (
-                          <Loader2 className="w-3 h-3 animate-spin" />
-                        ) : isPlaying ? (
-                          <Square className="w-3 h-3" />
-                        ) : (
-                          <Play className="w-3 h-3" />
+                    {(supportedModelsList.length > 0 || supportedLangsList.length > 0) && (
+                      <div className="text-[10px] text-slate-500 space-y-0.5">
+                        {supportedModelsList.length > 0 && (
+                          <div className="truncate font-mono" title={supportedModelsList.join(', ')}>
+                            Models: {supportedModelsList.slice(0, 3).join(', ')}
+                            {supportedModelsList.length > 3 ? ` +${supportedModelsList.length - 3}` : ''}
+                          </div>
                         )}
-                        <span>{synthesizingId === v.id ? 'Generating...' : isPlaying ? 'Stop' : 'Play'}</span>
-                      </button>
+                        {supportedLangsList.length > 0 && (
+                          <div className="truncate" title={supportedLangsList.join(', ')}>
+                            Languages: {supportedLangsList.slice(0, 4).join(', ')}
+                            {supportedLangsList.length > 4 ? ` +${supportedLangsList.length - 4}` : ''}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {!compat.playable && compat.reason && (
+                      <div className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1">
+                        {compat.reason}
+                      </div>
+                    )}
+
+                    {cardError && (
+                      <div className="text-[10px] text-red-700 bg-red-50 border border-red-200 rounded-lg px-2 py-1">
+                        {cardError}
+                      </div>
+                    )}
+
+                    {isPlaying && (
+                      <div className="space-y-1 pt-0.5">
+                        <div className="flex items-center justify-between text-[10px] font-semibold text-orange-700">
+                          <span>{isPaused ? 'Paused' : 'Playing'}</span>
+                          <span className="tabular-nums">
+                            {formatDuration(playbackProgress.currentTime)} / {formatDuration(playbackProgress.duration)}
+                          </span>
+                        </div>
+                        <div className="h-1.5 w-full rounded-full bg-slate-200 overflow-hidden">
+                          <div
+                            className="h-full bg-orange-500 transition-all"
+                            style={{ width: `${progressPct}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200/70">
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          aria-label={isGenerating ? `Generating ${v.name}` : isPlaying ? `Stop ${v.name}` : `Play ${v.name}`}
+                          title={playDisabled ? (textError || compat.reason || 'Unavailable') : undefined}
+                          disabled={playDisabled}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePreviewVoice(v);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                          {isGenerating ? (
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                          ) : isPlaying ? (
+                            <Square className="w-3 h-3" />
+                          ) : (
+                            <Play className="w-3 h-3" />
+                          )}
+                          <span>{isGenerating ? 'Generating...' : isPlaying ? 'Stop' : 'Play'}</span>
+                        </button>
+                        {isPlaying && (
+                          <button
+                            type="button"
+                            aria-label={isPaused ? `Resume ${v.name}` : `Pause ${v.name}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              togglePauseResume();
+                            }}
+                            className="px-2 py-1 rounded-lg bg-slate-200 hover:bg-slate-300 text-slate-900 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            {isPaused ? <Play className="w-3 h-3" /> : <Pause className="w-3 h-3" />}
+                            <span>{isPaused ? 'Resume' : 'Pause'}</span>
+                          </button>
+                        )}
+                      </div>
                       <button
                         type="button"
                         onClick={(e) => {
@@ -745,15 +1219,20 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
           <div>
             <label htmlFor="vs-test-text" className="block font-bold text-slate-700 mb-1">
-              Test Utterance ({testText.length} chars)
+              Test Utterance ({testText.length} / {PREVIEW_MAX_CHARS} chars)
             </label>
             <textarea
               id="vs-test-text"
               rows={3}
               value={testText}
               onChange={(e) => setTestText(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 leading-relaxed"
+              className={`w-full px-3 py-2 rounded-xl border leading-relaxed ${
+                textError ? 'border-red-300 bg-red-50/30' : 'border-slate-200'
+              }`}
             />
+            {textError && (
+              <div className="mt-1 text-[11px] font-semibold text-red-600">{textError}</div>
+            )}
           </div>
 
           <div>
@@ -774,28 +1253,46 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
           {selectedVoice && (
             <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-              <div className="font-bold text-slate-900">
-                Selected: {selectedVoice.name}
-                {SHOWCASE_ALIAS_BY_VOICE_ID[selectedVoice.provider_voice_id]
-                  ? ` (${SHOWCASE_ALIAS_BY_VOICE_ID[selectedVoice.provider_voice_id]})`
-                  : ''}
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-bold text-slate-900">
+                  Selected: {selectedVoice.name}
+                  {SHOWCASE_ALIAS_BY_VOICE_ID[selectedVoice.provider_voice_id]
+                    ? ` (${SHOWCASE_ALIAS_BY_VOICE_ID[selectedVoice.provider_voice_id]})`
+                    : ''}
+                </div>
+                <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[10px] font-bold">
+                  {formatProviderLabel(selectedVoice.provider)}
+                </span>
               </div>
               <div className="text-[11px] text-slate-600 font-mono break-all">
-                ID: {selectedVoice.provider_voice_id} · Model: {selectedModelId === 'auto' ? `Auto (${qualityProfile})` : selectedModelId}
+                ID: {selectedVoice.provider_voice_id} · Model: {selectedModelId === 'auto' ? `Auto (${resolvedAssignedModelId || qualityProfile})` : selectedModelId}
               </div>
+              {!selectedVoiceCompat.playable && selectedVoiceCompat.reason && (
+                <div className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-2.5 py-1.5">
+                  {selectedVoiceCompat.reason}
+                </div>
+              )}
               <div className="flex gap-2">
                 <button
                   type="button"
-                  disabled={selectedVoice.access_status === 'plan_upgrade_required' || synthesizingId === selectedVoice.id}
+                  disabled={!selectedVoiceCompat.playable || Boolean(textError) || synthesizingId === selectedVoice.id}
                   onClick={() => handlePreviewVoice(selectedVoice)}
-                  className="flex-1 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
+                  className="flex-1 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {synthesizingId === selectedVoice.id ? (
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : playingId === selectedVoice.id ? (
+                    <Square className="w-3.5 h-3.5" />
                   ) : (
                     <Play className="w-3.5 h-3.5" />
                   )}
-                  <span>{synthesizingId === selectedVoice.id ? 'Generating...' : 'Generate & Play'}</span>
+                  <span>
+                    {synthesizingId === selectedVoice.id
+                      ? 'Generating...'
+                      : playingId === selectedVoice.id
+                      ? 'Stop'
+                      : 'Generate & Play'}
+                  </span>
                 </button>
                 {playingId && (
                   <>
@@ -809,7 +1306,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                     </button>
                     <button
                       type="button"
-                      onClick={stopPlayback}
+                      onClick={() => stopPlayback()}
                       className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold flex items-center gap-1 cursor-pointer"
                     >
                       <Square className="w-3.5 h-3.5" />
@@ -819,8 +1316,19 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                 )}
               </div>
               {nowPlayingInfo && (
-                <div className="text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-xl px-2.5 py-1.5">
-                  {isPaused ? 'Paused' : 'Playing'}: {nowPlayingInfo.voiceName} · <span className="font-mono">{nowPlayingInfo.modelId}</span>
+                <div className="text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-xl px-2.5 py-2 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span>
+                      {isPaused ? 'Paused' : 'Playing'}: {nowPlayingInfo.voiceName} ({formatProviderLabel(nowPlayingInfo.provider)})
+                    </span>
+                    <span className="tabular-nums">
+                      {formatDuration(playbackProgress.currentTime)} / {formatDuration(playbackProgress.duration)}
+                    </span>
+                  </div>
+                  <div className="font-mono text-[10px] text-orange-800">Model: {nowPlayingInfo.modelId}</div>
+                  <div className="h-1.5 w-full rounded-full bg-orange-200/70 overflow-hidden">
+                    <div className="h-full bg-orange-600 transition-all" style={{ width: `${progressPct}%` }} />
+                  </div>
                 </div>
               )}
             </div>
@@ -828,23 +1336,50 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
           {compareVoice && (
             <div className="p-3 rounded-2xl bg-orange-50/50 border border-orange-200 space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="font-bold text-slate-900">Compare: {compareVoice.name}</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-bold text-slate-900 truncate">
+                    Compare: {compareVoice.name} ({formatProviderLabel(compareVoice.provider)})
+                  </div>
+                  <div className="text-[10px] font-mono text-slate-500 truncate">{compareVoice.provider_voice_id}</div>
+                </div>
                 <button
                   type="button"
-                  disabled={compareVoice.access_status === 'plan_upgrade_required'}
+                  disabled={
+                    synthesizingId === compareVoice.id ||
+                    (playingId !== compareVoice.id && (!compareVoiceCompat.playable || Boolean(textError)))
+                  }
                   onClick={() => handlePreviewVoice(compareVoice)}
-                  className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold cursor-pointer disabled:opacity-40"
+                  className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                 >
-                  Play Compare
+                  {synthesizingId === compareVoice.id ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : playingId === compareVoice.id ? (
+                    <Square className="w-3 h-3" />
+                  ) : (
+                    <Play className="w-3 h-3" />
+                  )}
+                  <span>
+                    {synthesizingId === compareVoice.id
+                      ? 'Generating...'
+                      : playingId === compareVoice.id
+                      ? 'Stop Compare'
+                      : 'Play Compare'}
+                  </span>
                 </button>
               </div>
+              {!compareVoiceCompat.playable && compareVoiceCompat.reason && (
+                <div className="text-[10px] text-amber-800">{compareVoiceCompat.reason}</div>
+              )}
             </div>
           )}
 
           {lastPreviewMeta && (
             <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-[11px] text-emerald-900 space-y-1">
               <div className="font-bold">Last Synthesis Telemetry</div>
+              <div>
+                Provider: <span className="font-semibold">{formatProviderLabel(lastPreviewMeta.provider)}</span> · Voice: <span className="font-mono">{lastPreviewMeta.voice_id}</span>
+              </div>
               <div>Model: <span className="font-mono">{lastPreviewMeta.model_used}</span></div>
               <div>Latency: {lastPreviewMeta.latency_ms} ms · Cache hit: {String(lastPreviewMeta.cache_hit)}</div>
               <div>Estimated cost: ₹{((lastPreviewMeta.estimated_cost_paise || 0) / 100).toFixed(2)}</div>
@@ -882,36 +1417,60 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
       {/* Model Discovery Reference Table */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/90 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-extrabold text-slate-900">Discovered ElevenLabs Speech Models ({models.length})</h2>
-          <span className="text-[11px] text-slate-500">Select a compatible model to audition with the active voice &amp; language</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <h2 className="text-sm font-extrabold text-slate-900">
+            Speech Model Catalogue ({visibleCatalogModels.length})
+          </h2>
+          <span className="text-[11px] text-slate-500">
+            Select a compatible TTS model to audition with the active voice &amp; {selectedLang}
+          </span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="text-[11px] text-slate-500 border-b border-slate-200">
               <tr>
+                <th className="py-2 pr-3">Provider</th>
                 <th className="py-2 pr-3">Model</th>
                 <th className="py-2 pr-3">Status ({selectedLang})</th>
                 <th className="py-2 pr-3">Capabilities</th>
                 <th className="py-2 pr-3">Indian Languages</th>
                 <th className="py-2 pr-3">Max Chars</th>
-                <th className="py-2">Test</th>
+                <th className="py-2">Listen</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {models.map((m) => {
-                const iso = selectedLang.split('-')[0].toLowerCase();
-                const langSupported = (m.languages || []).includes(iso);
-                const canTts = m.can_do_tts !== false && m.availability_status !== 'restricted';
+              {visibleCatalogModels.map((m) => {
+                const canTts = isModelTts(m);
+                const langSupported = isModelCompatibleWithLanguage(m, selectedLang);
+                const voiceCompatible = Boolean(
+                  selectedVoice &&
+                    isModelCompatibleWithVoice(m, selectedVoice) &&
+                    selectedVoice.access_status !== 'plan_upgrade_required' &&
+                    selectedVoice.provider_configured !== false &&
+                    isVoiceCompatibleWithLanguage(selectedVoice, selectedLang),
+                );
                 const statusBadge = !canTts
-                  ? { label: 'Restricted / Non-TTS', cls: 'bg-red-100 text-red-700' }
+                  ? { label: 'STT-Only / Non-TTS', cls: 'bg-red-100 text-red-700' }
                   : !langSupported
                   ? { label: `Unsupported (${selectedLang})`, cls: 'bg-slate-100 text-slate-600' }
                   : m.experimental
-                  ? { label: 'Experimental', cls: 'bg-amber-100 text-amber-800' }
-                  : { label: 'Available', cls: 'bg-emerald-100 text-emerald-700' };
+                  ? { label: 'Experimental TTS', cls: 'bg-amber-100 text-amber-800' }
+                  : { label: 'TTS Available', cls: 'bg-emerald-100 text-emerald-700' };
+                const listenDisabled = !canTts || !langSupported || !voiceCompatible || Boolean(textError);
+
                 return (
-                  <tr key={m.model_id}>
+                  <tr key={`${m.provider || 'elevenlabs'}-${m.model_id}`}>
+                    <td className="py-2.5 pr-3">
+                      <span
+                        className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          m.provider === 'sarvam'
+                            ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                            : 'bg-slate-50 border-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {formatProviderLabel(m.provider || 'elevenlabs')}
+                      </span>
+                    </td>
                     <td className="py-2.5 pr-3">
                       <div className="font-mono font-semibold text-slate-900">{m.model_id}</div>
                       <div className="text-[11px] text-slate-500">{m.name}</div>
@@ -923,28 +1482,29 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                     </td>
                     <td className="py-2.5 pr-3 text-[11px] text-slate-600">
                       {[
-                        canTts ? 'TTS' : null,
+                        canTts ? 'TTS' : 'STT-Only',
                         m.streaming_supported ? 'Streaming' : null,
-                        m.low_latency_suitable ? 'Low Latency' : null,
+                        m.latency_tier ? m.latency_tier.replace(/_/g, ' ') : m.low_latency_suitable ? 'Low Latency' : null,
                       ]
                         .filter(Boolean)
                         .join(' · ') || '—'}
                     </td>
                     <td className="py-2.5 pr-3 text-slate-600">
                       {(m.languages || [])
-                        .filter((l: string) => ['en', 'hi', 'te', 'ta', 'kn', 'ml', 'mr', 'bn', 'gu', 'pa', 'or', 'as', 'ur'].includes(l))
+                        .filter((l: string) => ['en', 'hi', 'te', 'ta', 'kn', 'ml', 'mr', 'bn', 'gu', 'pa', 'or', 'od-IN', 'as', 'ur'].includes(l))
                         .join(', ') || '—'}
                     </td>
                     <td className="py-2.5 pr-3 tabular-nums">{m.max_chars_subscribed?.toLocaleString() || '10,000'}</td>
                     <td className="py-2.5">
                       <button
                         type="button"
-                        disabled={!canTts || !langSupported || !selectedVoice}
+                        disabled={listenDisabled}
                         onClick={() => {
+                          if (!selectedVoice || listenDisabled) return;
                           setSelectedModelId(m.model_id);
-                          if (selectedVoice) handlePreviewVoice(selectedVoice, m.model_id);
+                          handlePreviewVoice(selectedVoice, m.model_id);
                         }}
-                        className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold cursor-pointer disabled:opacity-40"
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Listen
                       </button>
@@ -959,4 +1519,3 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     </div>
   );
 };
-

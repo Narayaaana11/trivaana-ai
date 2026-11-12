@@ -157,6 +157,8 @@ SARVAM_V4_FLASH_SPEAKERS: List[Dict[str, Any]] = [
 
 SARVAM_V3_SPEAKER_IDS = {s["id"] for s in SARVAM_V3_SPEAKERS}
 SARVAM_V4_SPEAKER_IDS = {s["id"] for s in SARVAM_V4_FLASH_SPEAKERS}
+SARVAM_V4_SPEAKERS_BY_ID = {s["id"]: s for s in SARVAM_V4_FLASH_SPEAKERS}
+SUPPORTED_TTS_PROVIDERS = ("sarvam", "elevenlabs", "openai", "indicf5")
 
 
 class SarvamVoiceProvider(BaseVoiceProvider):
@@ -256,12 +258,14 @@ class SarvamVoiceProvider(BaseVoiceProvider):
             raise VoiceProviderValidationError("Sarvam TTS text exceeds maximum 2,500 character limit.")
         if not self.is_configured:
             raw = b"\xff\xfb\x90\x00" + text.encode("utf-8")
-            return (raw, {"cache_hit": False, "model_id": model_id or "sandbox", "provider_characters_reported": 0}) if return_metadata else raw
+            return (raw, {"cache_hit": False, "model_id": model_id or "sandbox", "provider_characters_reported": 0, "sandbox": True}) if return_metadata else raw
 
         api_lang = self.map_language_code(language)
         speaker = (voice_id or "shubh").strip()
         if speaker == "meera":
             speaker = "priya"  # legacy default remap only when unmapped default 'meera' is passed
+        if speaker not in SARVAM_V3_SPEAKER_IDS and speaker not in SARVAM_V4_SPEAKER_IDS:
+            raise VoiceProviderValidationError(f"Unknown Sarvam AI speaker '{speaker}'.")
 
         chosen_model = model_id or ("bulbul:v4-flash" if speaker in SARVAM_V4_SPEAKER_IDS else "bulbul:v3")
         if chosen_model == "bulbul:v2":
@@ -272,6 +276,12 @@ class SarvamVoiceProvider(BaseVoiceProvider):
             raise VoiceProviderValidationError(f"Speaker '{speaker}' is only compatible with 'bulbul:v4-flash', not 'bulbul:v3'.")
         if chosen_model == "bulbul:v4-flash" and speaker in SARVAM_V3_SPEAKER_IDS:
             raise VoiceProviderValidationError(f"Speaker '{speaker}' is a 'bulbul:v3' speaker; select 'bulbul:v3' or a 'bulbul:v4-flash' speaker.")
+        if speaker in SARVAM_V4_SPEAKERS_BY_ID:
+            allowed_langs = SARVAM_V4_SPEAKERS_BY_ID[speaker].get("langs") or []
+            if language not in allowed_langs:
+                raise VoiceProviderValidationError(
+                    f"Sarvam speaker '{speaker}' supports {', '.join(allowed_langs)}, not '{language}'."
+                )
 
         pace = max(0.5, min(2.0, float(speed or 1.0)))
         cache_voice = f"{speaker}:{chosen_model}:{round(pace, 2)}:{output_audio_codec}:{speech_sample_rate}"
@@ -566,7 +576,7 @@ class ElevenLabsVoiceProvider(BaseVoiceProvider):
             raise VoiceProviderValidationError("Text exceeds maximum single-request character limit (10,000).")
         if not self.is_configured:
             raw = b"\xff\xfb\x90\x00" + text.encode("utf-8")
-            return (raw, {"cache_hit": False, "model_id": model_id or "sandbox", "provider_characters_reported": 0}) if return_metadata else raw
+            return (raw, {"cache_hit": False, "model_id": model_id or "sandbox", "provider_characters_reported": 0, "sandbox": True}) if return_metadata else raw
 
         target_voice = voice_id or "EXAVITQu4vr4xnSDxMaL"  # Sarah (premade, accessible)
         chosen_model = model_id or self._resolve_default_model(language)
