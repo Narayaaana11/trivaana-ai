@@ -91,6 +91,15 @@ class CampaignService:
         """
         cur = conn.cursor()
 
+        pause = ComplianceService.get_emergency_pause(conn)
+        if pause["paused"]:
+            raise ValueError(f"Outbound calling paused by platform administrator: {pause['reason']}")
+
+        cur.execute("SELECT status FROM tenants WHERE id = ?", (tenant_id,))
+        tenant_row = cur.fetchone()
+        if not tenant_row or (tenant_row["status"] or "active") != "active":
+            raise ValueError("Workspace is suspended or inactive")
+
         cur.execute("SELECT * FROM campaigns WHERE id = ? AND tenant_id = ?", (campaign_id, tenant_id))
         campaign = cur.fetchone()
         if not campaign:
@@ -375,6 +384,10 @@ class CampaignService:
             raise ValueError("Campaign not found")
 
         now = datetime.now(timezone.utc).isoformat()
+        cur.execute("SELECT language FROM agents WHERE id = ? AND tenant_id = ?", (cmp["agent_id"], tenant_id))
+        ag = cur.fetchone()
+        agent_lang = ag["language"] if ag and ag["language"] else "te-IN"
+
         cur.execute(
             """
             SELECT * FROM campaign_jobs
@@ -398,7 +411,7 @@ class CampaignService:
                     tenant_id=tenant_id,
                     contact_name=lead["name"],
                     phone=lead["phone"],
-                    language="te-IN",
+                    language=agent_lang,
                     agent_id=cmp["agent_id"],
                     campaign_id=campaign_id,
                     is_sandbox=bool(cmp["is_sandbox"]),
@@ -412,14 +425,41 @@ class CampaignService:
             except Exception as exc:
                 cur.execute("UPDATE campaign_jobs SET status = 'failed', last_error = ?, updated_at = ? WHERE id = ?", (str(exc)[:200], now, job["id"]))
         conn.commit()
-        return {"status": "processed", "campaign_id": campaign_id, "due_found": len(due_jobs), "dispatched": dispatched}
+        return {
+            "status": "processed",
+            "campaign_id": campaign_id,
+            "due_found": len(due_jobs),
+            "dispatched": dispatched,
+            "requeued_count": dispatched,
+        }
 
     @staticmethod
     def advance_campaign_queue(conn: sqlite3.Connection, tenant_id: str, campaign_id: str):
         cur = conn.cursor()
-        cur.execute("SELECT status, agent_id, is_sandbox FROM campaigns WHERE id = ? AND tenant_id = ?", (campaign_id, tenant_id))
+        cur.execute("SELECT * FROM campaigns WHERE id = ? AND tenant_id = ?", (campaign_id, tenant_id))
         cmp = cur.fetchone()
         if not cmp or cmp["status"] != "running":
+            return
+
+        cmp_dict = dict(cmp)
+        if not cmp_dict.get("is_sandbox") and not cmp_dict.get("bypass_trai"):
+            ch = json.loads(cmp_dict.get("calling_hours_json") or '{"start":"09:00","end":"21:00"}')
+            cd = json.loads(cmp_dict.get("calling_days_json") or "[]")
+            if not ComplianceService.is_within_calling_hours(
+                ch.get("start", "09:00"), ch.get("end", "21:00"), cd or None
+            ):
+                return
+
+        cb = CampaignService.evaluate_provider_circuit_breaker(conn, tenant_id, campaign_id, failed_now=True)
+        if cb.get("tripped"):
+            return
+
+        max_conc = max(1, int(cmp_dict.get("concurrency") or 1))
+        cur.execute(
+            "SELECT COUNT(*) as active_cnt FROM campaign_jobs WHERE campaign_id = ? AND tenant_id = ? AND status = 'calling'",
+            (campaign_id, tenant_id),
+        )
+        if cur.fetchone()["active_cnt"] >= max_conc:
             return
 
         now = datetime.now(timezone.utc).isoformat()
@@ -449,13 +489,17 @@ class CampaignService:
             conn.commit()
             return
 
+        cur.execute("SELECT language FROM agents WHERE id = ? AND tenant_id = ?", (cmp["agent_id"], tenant_id))
+        ag = cur.fetchone()
+        agent_lang = ag["language"] if ag and ag["language"] else "te-IN"
+
         try:
             call_info = CallService.initiate_call(
                 conn=conn,
                 tenant_id=tenant_id,
                 contact_name=lead["name"],
                 phone=lead["phone"],
-                language="te-IN",
+                language=agent_lang,
                 agent_id=cmp["agent_id"],
                 campaign_id=campaign_id,
                 is_sandbox=bool(cmp["is_sandbox"]),
@@ -475,6 +519,7 @@ class CampaignService:
             """, (str(e)[:200], now, next_job["id"]))
             cur.execute("UPDATE campaigns SET failed = failed + 1 WHERE id = ?", (campaign_id,))
             conn.commit()
+            CampaignService.evaluate_provider_circuit_breaker(conn, tenant_id, campaign_id, failed_now=True)
 
     @staticmethod
     def kill_campaign(conn: sqlite3.Connection, tenant_id: str, campaign_id: Optional[str] = None) -> Dict[str, Any]:

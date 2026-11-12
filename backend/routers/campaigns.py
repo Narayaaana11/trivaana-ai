@@ -11,7 +11,7 @@ import io
 import sqlite3
 from datetime import datetime, timezone
 
-from core.dependencies import get_current_tenant, get_db
+from core.dependencies import get_current_tenant, get_current_user, get_db, require_roles, require_scope
 from services.campaign_service import CampaignService
 from services.call_service import CallService
 from providers.base import CallStatusEvent
@@ -45,7 +45,7 @@ class CampaignActionRequest(BaseModel):
     campaign_id: str = Field(..., description="Target Campaign ID")
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("campaigns:read"))])
 def list_campaigns(
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
     conn: sqlite3.Connection = Depends(get_db)
@@ -100,7 +100,7 @@ def list_campaigns(
     return {"campaigns": campaigns, "count": len(campaigns)}
 
 
-@router.get("/{campaign_id}")
+@router.get("/{campaign_id}", dependencies=[Depends(require_scope("campaigns:read"))])
 def get_campaign_detail(
     campaign_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -128,7 +128,7 @@ def get_campaign_detail(
     return {"campaign": dict(c), "contacts": contacts, "contact_count": len(contacts)}
 
 
-@router.get("/{campaign_id}/export")
+@router.get("/{campaign_id}/export", dependencies=[Depends(require_scope("campaigns:read"))])
 def export_campaign_csv(
     campaign_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -164,7 +164,7 @@ def export_campaign_csv(
     )
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_campaign(
     req: CreateCampaignRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -187,12 +187,18 @@ def create_campaign(
     )
 
 
-@router.post("/start")
+@router.post("/start", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def start_campaign(
     req: StartCampaignRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user),
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
     conn: sqlite3.Connection = Depends(get_db)
 ):
+    if req.bypass_trai and not (current_user.get("is_super_admin") or current_user.get("role") in ("owner", "admin")):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only workspace owners or admins can enable bypass_trai.",
+        )
     cur = conn.cursor()
     campaign_id = req.campaign_id
 
@@ -229,7 +235,7 @@ def start_campaign(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Campaign start failed: {str(e)}")
 
 
-@router.post("/{campaign_id}/simulate-progress")
+@router.post("/{campaign_id}/simulate-progress", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def simulate_campaign_progress(
     campaign_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -277,7 +283,7 @@ def simulate_campaign_progress(
     return {"status": "simulated", "campaign_id": campaign_id, "completed_now": completed_now}
 
 
-@router.post("/pause")
+@router.post("/pause", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def pause_campaign(
     req: CampaignActionRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -286,7 +292,7 @@ def pause_campaign(
     return CampaignService.pause_campaign(conn, current_tenant["id"], req.campaign_id)
 
 
-@router.post("/{campaign_id}/pause")
+@router.post("/{campaign_id}/pause", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def pause_campaign_by_id(
     campaign_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -295,7 +301,7 @@ def pause_campaign_by_id(
     return CampaignService.pause_campaign(conn, current_tenant["id"], campaign_id)
 
 
-@router.post("/resume")
+@router.post("/resume", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def resume_campaign(
     req: CampaignActionRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -304,7 +310,7 @@ def resume_campaign(
     return CampaignService.resume_campaign(conn, current_tenant["id"], req.campaign_id)
 
 
-@router.post("/{campaign_id}/resume")
+@router.post("/{campaign_id}/resume", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def resume_campaign_by_id(
     campaign_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -313,7 +319,7 @@ def resume_campaign_by_id(
     return CampaignService.resume_campaign(conn, current_tenant["id"], campaign_id)
 
 
-@router.post("/kill")
+@router.post("/kill", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def kill_campaign(
     req: Optional[CampaignActionRequest] = None,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -323,7 +329,7 @@ def kill_campaign(
     return CampaignService.kill_campaign(conn, current_tenant["id"], target_id)
 
 
-@router.post("/{campaign_id}/process-retries")
+@router.post("/{campaign_id}/process-retries", dependencies=[Depends(require_scope("campaigns:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def process_campaign_retries(
     campaign_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),

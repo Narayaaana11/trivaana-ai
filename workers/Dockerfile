@@ -1,4 +1,4 @@
-  FROM python:3.12-slim
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -9,5 +9,6 @@ COPY backend /app/backend
 COPY workers /app/workers
 
 ENV PYTHONPATH=/app/backend:/app
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import workers.workflows.temporal_worker; print('ok')" || exit 1
 CMD ["python", "/app/workers/campaigns/dispatcher.py"]
-

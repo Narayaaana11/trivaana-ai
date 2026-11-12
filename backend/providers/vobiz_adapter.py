@@ -56,8 +56,12 @@ class VobizTelephonyProvider(BaseTelephonyProvider):
 
         call_id = (extra_data or {}).get("call_id", "")
         base_url = settings.PUBLIC_BASE_URL.rstrip("/")
-        answer_url = f"{base_url}/api/calls/vobiz-xml/{call_id}" if call_id else f"{base_url}/api/calls/vobiz-xml/default"
         cb_tok = self.build_callback_token(call_id) if call_id else ""
+        answer_url = (
+            f"{base_url}/api/calls/vobiz-xml/{call_id}?vobiz_auth={cb_tok}"
+            if call_id
+            else f"{base_url}/api/calls/vobiz-xml/default"
+        )
         status_url = webhook_url or (
             f"{base_url}/api/calls/callback/{call_id}?vobiz_auth={cb_tok}" if call_id else ""
         )
@@ -186,4 +190,60 @@ class VobizTelephonyProvider(BaseTelephonyProvider):
             recording_url=payload.get("RecordingUrl") or payload.get("RecordUrl"),
             raw_payload=payload,
         )
+
+    def transfer_call(self, provider_call_id: str, to_phone: str) -> Dict[str, Any]:
+        if not self.is_configured:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "not_configured",
+                "provider": "vobiz",
+                "error": "Vobiz credentials not configured for live call transfer.",
+            }
+        if not provider_call_id:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "vobiz",
+                "error": "Missing Vobiz CallUUID for transfer.",
+            }
+        base_url = settings.PUBLIC_BASE_URL.rstrip("/")
+        aleg_url = f"{base_url}/api/calls/vobiz-xml/{provider_call_id}"
+        headers = {
+            "X-Auth-ID": self.auth_id,
+            "X-Auth-Token": self.auth_token,
+            "Content-Type": "application/json",
+        }
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v1/Account/{self.auth_id}/Call/{provider_call_id}/",
+                headers=headers,
+                json={"legs": "aleg", "aleg_url": aleg_url, "aleg_method": "POST"},
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 202):
+                return {
+                    "supported": True,
+                    "success": True,
+                    "status": "executed",
+                    "provider": "vobiz",
+                    "provider_call_id": provider_call_id,
+                    "transfer_to": to_phone,
+                }
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "vobiz",
+                "error": f"Vobiz transfer failed ({resp.status_code}): {resp.text[:300]}",
+            }
+        except Exception as exc:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "vobiz",
+                "error": str(exc),
+            }
 

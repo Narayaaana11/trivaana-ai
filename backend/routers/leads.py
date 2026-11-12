@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from services.lead_service import LeadService
 from services.call_service import normalize_phone
 from services.compliance_service import ComplianceService
@@ -56,6 +56,7 @@ class BulkPasteContactsRequest(BaseModel):
     contacts: List[Dict[str, Any]]
     list_name: Optional[str] = None
     source: str = "Paste Import"
+    consent_confirmed: bool = False
 
 
 class CreateContactListRequest(BaseModel):
@@ -64,18 +65,53 @@ class CreateContactListRequest(BaseModel):
     description: Optional[str] = None
     lead_ids: List[str] = Field(default_factory=list)
     phones: List[str] = Field(default_factory=list)
+    consent_confirmed: bool = False
 
 
-def _serialize_lead(row: sqlite3.Row) -> Dict[str, Any]:
+def _compute_lead_score(lead_dict: Dict[str, Any], call_count: int = 0, positive_calls: int = 0, appt_count: int = 0) -> tuple[int, str]:
+    if lead_dict.get("opt_out") or lead_dict.get("lead_status") == "do_not_call":
+        return 0, "dnc"
+
+    status_base = {
+        "converted": 95,
+        "interested": 82,
+        "callback_required": 72,
+        "contacted": 52,
+        "new": 45,
+        "not_interested": 15,
+    }
+    score = status_base.get(str(lead_dict.get("lead_status") or "new").lower(), 40)
+    if lead_dict.get("consent_status") == "opted_in":
+        score += 5
+    if lead_dict.get("email"):
+        score += 3
+    score += min(call_count * 4, 12)
+    score += min(positive_calls * 8, 16)
+    score += min(appt_count * 12, 15)
+    score = max(0, min(100, int(score)))
+
+    if score >= 75:
+        tier = "hot"
+    elif score >= 45:
+        tier = "warm"
+    else:
+        tier = "cold"
+    return score, tier
+
+
+def _serialize_lead(row: sqlite3.Row, call_count: int = 0, positive_calls: int = 0, appt_count: int = 0) -> Dict[str, Any]:
     d = dict(row)
     d["tags"] = json.loads(d.pop("tags_json", "[]") or "[]")
     d["custom_fields"] = json.loads(d.pop("custom_fields_json", "{}") or "{}")
     d["lead_status"] = d.get("lead_status") or "new"
+    score, tier = _compute_lead_score(d, call_count=call_count, positive_calls=positive_calls, appt_count=appt_count)
+    d["lead_score"] = score
+    d["qualification_tier"] = tier
     return d
 
 
-@router.get("/leads")
-@router.get("/contacts")
+@router.get("/leads", dependencies=[Depends(require_scope("leads:read"))])
+@router.get("/contacts", dependencies=[Depends(require_scope("leads:read"))])
 def list_leads(
     search: Optional[str] = None,
     status: Optional[str] = None,
@@ -109,11 +145,46 @@ def list_leads(
     total_count = cur.fetchone()["total"]
 
     cur.execute(f"SELECT * FROM leads {where} ORDER BY created_at DESC LIMIT ? OFFSET ?", [*params, limit, offset])
-    leads = [_serialize_lead(r) for r in cur.fetchall()]
+    rows = cur.fetchall()
+
+    # Batch-fetch call & appointment signal counts to avoid N+1 queries
+    cur.execute(
+        "SELECT phone, COUNT(*) as cnt, COUNT(CASE WHEN sentiment='positive' THEN 1 END) as pos_cnt FROM calls WHERE tenant_id = ? GROUP BY phone",
+        (tenant["id"],),
+    )
+    call_stats = {r["phone"]: (r["cnt"], r["pos_cnt"]) for r in cur.fetchall()}
+    cur.execute(
+        "SELECT phone, COUNT(*) as cnt FROM appointments WHERE tenant_id = ? AND status = 'scheduled' GROUP BY phone",
+        (tenant["id"],),
+    )
+    appt_stats = {r["phone"]: r["cnt"] for r in cur.fetchall()}
+
+    leads = []
+    for r in rows:
+        c_cnt, pos_cnt = call_stats.get(r["phone"], (0, 0))
+        a_cnt = appt_stats.get(r["phone"], 0)
+        leads.append(_serialize_lead(r, call_count=c_cnt, positive_calls=pos_cnt, appt_count=a_cnt))
     return {"leads": leads, "count": len(leads), "total": total_count, "limit": limit, "offset": offset}
 
 
-@router.get("/leads/{lead_id}")
+@router.get("/leads/discover", dependencies=[Depends(require_scope("leads:read"))])
+def discover_leads(
+    city: str = "Hyderabad",
+    vertical: str = "Real Estate",
+    limit: int = 15,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db)
+):
+    return LeadService.discover_leads_scout(
+        conn=db,
+        tenant_id=tenant["id"],
+        city=city,
+        vertical=vertical,
+        limit=limit
+    )
+
+
+@router.get("/leads/{lead_id}", dependencies=[Depends(require_scope("leads:read"))])
 def get_lead_detail(
     lead_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -140,8 +211,98 @@ def get_lead_detail(
     return lead
 
 
-@router.post("/leads")
-@router.post("/contacts")
+@router.get("/leads/{lead_id}/timeline", dependencies=[Depends(require_scope("leads:read"))])
+def get_lead_timeline(
+    lead_id: str,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    cur = db.cursor()
+    cur.execute("SELECT * FROM leads WHERE id = ? AND tenant_id = ?", (lead_id, tenant["id"]))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Lead not found")
+
+    cur.execute(
+        "SELECT id, agent_id, direction, status, outcome, sentiment, duration_seconds, summary, created_at FROM calls WHERE tenant_id = ? AND (lead_id = ? OR phone = ?) ORDER BY created_at DESC LIMIT 50",
+        (tenant["id"], lead_id, row["phone"]),
+    )
+    calls = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        "SELECT id, title, status, scheduled_start, scheduled_end, created_at FROM appointments WHERE tenant_id = ? AND (lead_id = ? OR phone = ?) ORDER BY created_at DESC LIMIT 30",
+        (tenant["id"], lead_id, row["phone"]),
+    )
+    appointments = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        "SELECT id, action_type, action_name, status, created_at FROM call_actions WHERE tenant_id = ? AND call_id IN (SELECT id FROM calls WHERE tenant_id = ? AND (lead_id = ? OR phone = ?)) ORDER BY created_at DESC LIMIT 30",
+        (tenant["id"], tenant["id"], lead_id, row["phone"]),
+    )
+    actions = [dict(r) for r in cur.fetchall()]
+
+    cur.execute(
+        "SELECT id, consent_status, consent_source, consent_purpose, recorded_at FROM consent_records WHERE tenant_id = ? AND phone = ? ORDER BY recorded_at DESC LIMIT 20",
+        (tenant["id"], row["phone"]),
+    )
+    consents = [dict(r) for r in cur.fetchall()]
+
+    pos_calls = sum(1 for c in calls if c.get("sentiment") == "positive")
+    lead = _serialize_lead(row, call_count=len(calls), positive_calls=pos_calls, appt_count=len(appointments))
+
+    events: List[Dict[str, Any]] = [
+        {
+            "id": f"evt_created_{lead['id']}",
+            "event_type": "lead_created",
+            "title": f"Lead added via {lead.get('source') or 'Workspace'}",
+            "detail": f"Status: {lead['lead_status']} • City: {lead.get('city') or 'N/A'}",
+            "status": lead["lead_status"],
+            "timestamp": lead["created_at"],
+        }
+    ]
+    for c in calls:
+        events.append({
+            "id": f"evt_call_{c['id']}",
+            "event_type": "call",
+            "title": f"{str(c.get('direction') or 'outbound').title()} AI Call ({c.get('duration_seconds') or 0}s)",
+            "detail": c.get("summary") or c.get("outcome") or c.get("status"),
+            "status": c.get("sentiment") or c.get("status"),
+            "timestamp": c["created_at"],
+        })
+    for a in appointments:
+        events.append({
+            "id": f"evt_appt_{a['id']}",
+            "event_type": "appointment",
+            "title": f"Appointment: {a['title']}",
+            "detail": f"Scheduled {a['scheduled_start']}",
+            "status": a["status"],
+            "timestamp": a["created_at"],
+        })
+    for act in actions:
+        events.append({
+            "id": f"evt_act_{act['id']}",
+            "event_type": "ai_action",
+            "title": f"AI Action: {act['action_name']}",
+            "detail": act["action_type"],
+            "status": act["status"],
+            "timestamp": act["created_at"],
+        })
+    for cr in consents:
+        events.append({
+            "id": f"evt_cons_{cr['id']}",
+            "event_type": "consent",
+            "title": f"Consent {cr['consent_status']} ({cr.get('consent_source') or 'record'})",
+            "detail": cr.get("consent_purpose") or "",
+            "status": cr["consent_status"],
+            "timestamp": cr["recorded_at"],
+        })
+
+    events.sort(key=lambda e: str(e.get("timestamp") or ""), reverse=True)
+    return {"lead": lead, "timeline": events}
+
+
+@router.post("/leads", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
+@router.post("/contacts", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_lead(
     req: CreateLeadRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -187,8 +348,8 @@ def create_lead(
     return {"status": "success", "lead_id": lead_id, "phone": clean_phone, "lead": lead_obj}
 
 
-@router.put("/leads/{lead_id}")
-@router.put("/contacts/{lead_id}")
+@router.put("/leads/{lead_id}", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
+@router.put("/contacts/{lead_id}", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def update_lead(
     lead_id: str,
     req: UpdateLeadRequest,
@@ -237,7 +398,7 @@ def update_lead(
     return {"status": "success", "lead": _serialize_lead(cur.fetchone())}
 
 
-@router.delete("/leads/{lead_id}")
+@router.delete("/leads/{lead_id}", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def delete_lead(
     lead_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -251,10 +412,11 @@ def delete_lead(
     return {"status": "deleted", "lead_id": lead_id}
 
 
-@router.post("/leads/upload")
+@router.post("/leads/upload", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 async def upload_leads_csv(
     file: UploadFile = File(...),
     column_mapping: Optional[str] = Form(None),
+    consent_confirmed: bool = Form(False),
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
 ):
@@ -291,10 +453,11 @@ async def upload_leads_csv(
         csv_text=decoded,
         filename=filename,
         column_mapping=parsed_mapping,
+        consent_confirmed=consent_confirmed,
     )
 
 
-@router.post("/leads/bulk-paste")
+@router.post("/leads/bulk-paste", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def bulk_paste_contacts(
     req: BulkPasteContactsRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -327,16 +490,26 @@ def bulk_paste_contacts(
         lead_id = f"lead_{uuid.uuid4().hex[:8]}"
         known_keys = {"name", "phone", "email", "city", "vertical", "notes"}
         custom_fields = {k: v for k, v in item.items() if k not in known_keys}
+        item_consent = str(item.get("consent_status") or "").strip().lower()
+        resolved_consent = "opted_in" if (req.consent_confirmed or item_consent == "opted_in") else "pending"
         cur.execute("""
         INSERT INTO leads (
             id, tenant_id, name, phone, email, city, vertical, status, lead_status,
             source, consent_status, opt_out, custom_fields_json, notes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'new', ?, 'opted_in', 0, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'new', ?, ?, 0, ?, ?, ?, ?)
         """, (
             lead_id, tenant["id"], raw_name or f"Contact {clean_phone[-4:]}", clean_phone,
             item.get("email"), item.get("city") or "Hyderabad", item.get("vertical") or "General",
-            req.source, json.dumps(custom_fields), item.get("notes"), now, now
+            req.source, resolved_consent, json.dumps(custom_fields), item.get("notes"), now, now
         ))
+        if resolved_consent == "opted_in":
+            cur.execute(
+                """
+                INSERT INTO consent_records (id, tenant_id, lead_id, phone, consent_status, consent_source, consent_purpose, call_category, evidence_url_or_ref, recorded_at)
+                VALUES (?, ?, ?, ?, 'opted_in', ?, 'outbound_contact', 'service', ?, ?)
+                """,
+                (f"con_{uuid.uuid4().hex[:8]}", tenant["id"], lead_id, clean_phone, "bulk_paste_confirmed", req.source, now),
+            )
         imported += 1
         imported_ids.append(lead_id)
 
@@ -357,24 +530,7 @@ def bulk_paste_contacts(
     return {"status": "success", "imported_count": imported, "rejected_count": rejected, "errors": errors, "list_id": list_id, "lead_ids": imported_ids}
 
 
-@router.get("/leads/discover")
-def discover_leads(
-    city: str = "Hyderabad",
-    vertical: str = "Real Estate",
-    limit: int = 15,
-    tenant: dict = Depends(get_current_tenant),
-    db: sqlite3.Connection = Depends(get_db)
-):
-    return LeadService.discover_leads_scout(
-        conn=db,
-        tenant_id=tenant["id"],
-        city=city,
-        vertical=vertical,
-        limit=limit
-    )
-
-
-@router.post("/leads/{lead_id}/opt-out")
+@router.post("/leads/{lead_id}/opt-out", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def toggle_opt_out(
     lead_id: str,
     opt_out: bool = True,
@@ -400,7 +556,7 @@ def toggle_opt_out(
     return {"status": "opted_out" if opt_out else "opted_in", "success": True, "lead_id": lead_id, "opt_out": 1 if opt_out else 0}
 
 
-@router.get("/contact-lists")
+@router.get("/contact-lists", dependencies=[Depends(require_scope("leads:read"))])
 def list_contact_lists(
     list_type: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -417,7 +573,7 @@ def list_contact_lists(
     return {"lists": [dict(r) for r in cur.fetchall()]}
 
 
-@router.post("/contact-lists")
+@router.post("/contact-lists", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_contact_list(
     req: CreateContactListRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -439,13 +595,25 @@ def create_contact_list(
             lid = ex["id"]
         else:
             lid = f"lead_{uuid.uuid4().hex[:8]}"
+            list_consent = (
+                "opted_out" if req.list_type == "suppression"
+                else ("opted_in" if req.consent_confirmed else "pending")
+            )
             cur.execute(
                 """
                 INSERT INTO leads (id, tenant_id, name, phone, city, vertical, status, lead_status, source, consent_status, opt_out, created_at, updated_at)
                 VALUES (?, ?, ?, ?, 'Hyderabad', 'General', 'pending', 'new', 'List Import', ?, ?, ?, ?)
                 """,
-                (lid, tenant["id"], f"Contact {norm[-4:]}", norm, "opted_out" if req.list_type == "suppression" else "opted_in", 1 if req.list_type == "suppression" else 0, now, now),
+                (lid, tenant["id"], f"Contact {norm[-4:]}", norm, list_consent, 1 if req.list_type == "suppression" else 0, now, now),
             )
+            if list_consent == "opted_in":
+                cur.execute(
+                    """
+                    INSERT INTO consent_records (id, tenant_id, lead_id, phone, consent_status, consent_source, consent_purpose, call_category, evidence_url_or_ref, recorded_at)
+                    VALUES (?, ?, ?, ?, 'opted_in', 'contact_list_confirmed', 'outbound_contact', 'service', ?, ?)
+                    """,
+                    (f"con_{uuid.uuid4().hex[:8]}", tenant["id"], lid, norm, req.name.strip(), now),
+                )
         if req.list_type == "suppression":
             ComplianceService.add_dnc(db, tenant["id"], norm, reason=f"Suppression list: {req.name}", source="suppression_list")
         if lid not in lead_ids:
@@ -464,7 +632,7 @@ def create_contact_list(
     return {"status": "created", "list_id": list_id, "contact_count": len(lead_ids), "list_type": req.list_type}
 
 
-@router.delete("/contact-lists/{list_id}")
+@router.delete("/contact-lists/{list_id}", dependencies=[Depends(require_scope("leads:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def delete_contact_list(
     list_id: str,
     tenant: dict = Depends(get_current_tenant),

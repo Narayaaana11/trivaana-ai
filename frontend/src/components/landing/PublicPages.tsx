@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { trivaanaApi } from '@/lib/trivaana-api';
 import {
   VoicePill,
   Counter,
@@ -26,12 +27,12 @@ interface PageCommonProps {
 
 /* ---------------- 1. /voices Dedicated Page ---------------- */
 const ALL_VOICES = [
-  { id: 'v1', name: 'Meera', lang: 'hi-IN', label: 'Hindi · Warm', tier: 'Standard · ₹5/min', line: 'नमस्ते जी, मैं मीरा बोल रही हूँ। आपका अपॉइंटमेंट कन्फर्म कर दूँ?' },
-  { id: 'v2', name: 'Aravind', lang: 'te-IN', label: 'Telugu · Executive', tier: 'Standard · ₹5/min', line: 'నమస్కారం అండి! గేటెడ్ విల్లాస్ విజిట్ శనివారం ప్లాన్ చేద్దామా?' },
-  { id: 'v3', name: 'Priya', lang: 'hi-IN', label: 'Hindi · Flash v2.5', tier: 'Premium · ₹6.8/min', line: 'नमस्ते! आपकी NEET स्कॉलरशिप टेस्ट रविवार सुबह 10 बजे है।' },
-  { id: 'v4', name: 'Kavya', lang: 'ta-IN', label: 'Tamil · Conversational', tier: 'Premium · ₹6.8/min', line: 'வணக்கம்! உங்கள் டெமோ அழைப்பை நாளை காலை உறுதி செய்யலாமா?' },
-  { id: 'v5', name: 'Ananya', lang: 'kn-IN', label: 'Kannada · Reception', tier: 'Standard · ₹5/min', line: 'ನಮಸ್ಕಾರ! ನಿಮಗೆ ಅನುಕೂಲವಾದ ಸಮಯವನ್ನು ದಯವಿಟ್ಟು ತಿಳಿಸಿ.' },
-  { id: 'v6', name: 'Rohan', lang: 'en-IN', label: 'Indian English · Sales', tier: 'Standard · ₹5/min', line: 'Hi! Calling about your test drive booking scheduled for tomorrow at 11 AM.' },
+  { id: 'v1', name: 'Meera', lang: 'hi-IN', label: 'Hindi · Warm', tier: 'Standard · ₹6.50/min', line: 'नमस्ते जी, मैं मीरा बोल रही हूँ। आपका अपॉइंटमेंट कन्फर्म कर दूँ?' },
+  { id: 'v2', name: 'Aravind', lang: 'te-IN', label: 'Telugu · Executive', tier: 'Standard · ₹6.50/min', line: 'నమస్కారం అండి! గేటెడ్ విల్లాస్ విజిట్ శనివారం ప్లాన్ చేద్దామా?' },
+  { id: 'v3', name: 'Priya', lang: 'hi-IN', label: 'Hindi · Flash v2.5', tier: 'Premium · ₹8.50/min', line: 'नमस्ते! आपकी NEET स्कॉलरशिप टेस्ट रविवार सुबह 10 बजे है।' },
+  { id: 'v4', name: 'Kavya', lang: 'ta-IN', label: 'Tamil · Conversational', tier: 'Premium · ₹8.50/min', line: 'வணக்கம்! உங்கள் டெமோ அழைப்பை நாளை காலை உறுதி செய்யலாமா?' },
+  { id: 'v5', name: 'Ananya', lang: 'kn-IN', label: 'Kannada · Reception', tier: 'Standard · ₹6.50/min', line: 'ನಮಸ್ಕಾರ! ನಿಮಗೆ ಅನುಕೂಲವಾದ ಸಮಯವನ್ನು ದಯವಿಟ್ಟು ತಿಳಿಸಿ.' },
+  { id: 'v6', name: 'Rohan', lang: 'en-IN', label: 'Indian English · Sales', tier: 'Standard · ₹6.50/min', line: 'Hi! Calling about your test drive booking scheduled for tomorrow at 11 AM.' },
 ];
 
 export const PublicVoicesPage: React.FC<PageCommonProps> = ({ onEnterDashboard }) => {
@@ -139,7 +140,7 @@ export const PublicVoicesPage: React.FC<PageCommonProps> = ({ onEnterDashboard }
 export const PublicPricingPage: React.FC<PageCommonProps> = ({ onEnterDashboard }) => {
   const [monthlyCalls, setMonthlyCalls] = useState(2000);
   const [avgMins, setAvgMins] = useState(1.5);
-  const [voiceRate, setVoiceRate] = useState<5 | 6.8>(5);
+  const [voiceRate, setVoiceRate] = useState<6.5 | 8.5>(6.5);
   const [channels, setChannels] = useState(2);
 
   const talkCost = Math.round(monthlyCalls * avgMins * voiceRate);
@@ -185,23 +186,23 @@ export const PublicPricingPage: React.FC<PageCommonProps> = ({ onEnterDashboard 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 type="button"
-                onClick={() => setVoiceRate(5)}
+                onClick={() => setVoiceRate(6.5)}
                 className={`p-3.5 rounded-2xl border text-left cursor-pointer ${
-                  voiceRate === 5 ? 'border-[#ff5500] bg-[#fff7ed]' : 'border-[#e4e4e9] bg-[#f6f6f8]'
+                  voiceRate === 6.5 ? 'border-[#ff5500] bg-[#fff7ed]' : 'border-[#e4e4e9] bg-[#f6f6f8]'
                 }`}
               >
                 <div className="font-bold text-[#0f0f14]">Standard Voice</div>
-                <div className="font-display text-lg font-extrabold text-[#ff5500]">₹5.00/min</div>
+                <div className="font-display text-lg font-extrabold text-[#ff5500]">₹6.50/min</div>
               </button>
               <button
                 type="button"
-                onClick={() => setVoiceRate(6.8)}
+                onClick={() => setVoiceRate(8.5)}
                 className={`p-3.5 rounded-2xl border text-left cursor-pointer ${
-                  voiceRate === 6.8 ? 'border-[#ff5500] bg-[#fff7ed]' : 'border-[#e4e4e9] bg-[#f6f6f8]'
+                  voiceRate === 8.5 ? 'border-[#ff5500] bg-[#fff7ed]' : 'border-[#e4e4e9] bg-[#f6f6f8]'
                 }`}
               >
                 <div className="font-bold text-[#0f0f14]">Premium Neural</div>
-                <div className="font-display text-lg font-extrabold text-[#ff5500]">₹6.80/min</div>
+                <div className="font-display text-lg font-extrabold text-[#ff5500]">₹8.50/min</div>
               </button>
             </div>
 
@@ -405,7 +406,13 @@ export const PublicProductPage: React.FC<{
 
 /* ---------------- 4. /contact Dedicated Page ---------------- */
 export const PublicContactPage: React.FC<{ onEnterDashboard: () => void }> = ({ onEnterDashboard }) => {
-  const [sent, setSent] = useState(false);
+  const [sentId, setSentId] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [message, setMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   return (
     <section className="bg-outpero-grid py-16 border-b border-[#e4e4e9]">
@@ -437,26 +444,45 @@ export const PublicContactPage: React.FC<{ onEnterDashboard: () => void }> = ({ 
           </div>
 
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              setSent(true);
+              setSubmitting(true);
+              setError(null);
+              try {
+                const res = await trivaanaApi.submitPublicContact({
+                  name,
+                  email,
+                  phone: phone || undefined,
+                  message,
+                });
+                setSentId(res.inquiry_id || 'submitted');
+              } catch (err: any) {
+                setError(err.message || 'Failed to send inquiry.');
+              } finally {
+                setSubmitting(false);
+              }
             }}
             className="md:col-span-7 bg-white rounded-3xl border border-[#e4e4e9] p-6 space-y-3 shadow-xs"
           >
-            {sent ? (
+            {sentId ? (
               <div className="py-10 text-center space-y-2">
                 <CheckCircle2 className="w-8 h-8 text-emerald-600 mx-auto" />
-                <div className="font-display font-bold text-base text-[#0f0f14]">Inquiry Noted</div>
-                <p className="text-[#525260]">For immediate setup, launch Mission Control or email support@trivaana.ai.</p>
+                <div className="font-display font-bold text-base text-[#0f0f14]">Inquiry Received</div>
+                <p className="text-[#525260]">
+                  Reference ID: <span className="font-mono font-bold text-[#0f0f14]">{sentId}</span>. For immediate setup, launch Mission Control or email support@trivaana.ai.
+                </p>
               </div>
             ) : (
               <>
-                <input required placeholder="Your Name" className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
-                <input required type="email" placeholder="Work Email" className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
-                <input placeholder="Phone (+91...)" className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
-                <textarea required rows={3} placeholder="Tell us about your use case (Real Estate, Healthcare, EdTech, Banking)..." className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
-                <button type="submit" className="w-full py-2.5 rounded-xl bg-[#ff5500] hover:bg-[#ea580c] text-white font-bold cursor-pointer inline-flex items-center justify-center gap-1.5">
-                  <Code2 className="w-3.5 h-3.5" /> Send Message
+                {error && (
+                  <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 font-semibold">{error}</div>
+                )}
+                <input required placeholder="Your Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
+                <input required type="email" placeholder="Work Email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
+                <input placeholder="Phone (+91...)" value={phone} onChange={(e) => setPhone(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
+                <textarea required rows={3} placeholder="Tell us about your use case (Real Estate, Healthcare, EdTech, Banking)..." value={message} onChange={(e) => setMessage(e.target.value)} className="w-full px-3.5 py-2.5 rounded-xl border border-[#e4e4e9]" />
+                <button type="submit" disabled={submitting} className="w-full py-2.5 rounded-xl bg-[#ff5500] hover:bg-[#ea580c] disabled:opacity-50 text-white font-bold cursor-pointer inline-flex items-center justify-center gap-1.5">
+                  <Code2 className="w-3.5 h-3.5" /> {submitting ? 'Sending...' : 'Send Message'}
                 </button>
               </>
             )}

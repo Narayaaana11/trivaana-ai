@@ -78,10 +78,13 @@ class Settings(BaseModel):
         )
     )
 
-    # Database & Cache
+    # Database & Cache (tunable for high-concurrency workloads)
     DATABASE_URL: str = Field(default_factory=lambda: os.environ.get("DATABASE_URL", ""))
     DATABASE_PATH: Path = Field(default_factory=lambda: Path(os.environ.get("DATABASE_PATH", str(DATA_DIR / "trivaana_saas.db"))))
     SQLITE_DB_PATH: Path = Field(default_factory=lambda: Path(os.environ.get("SQLITE_DB_PATH", str(DATA_DIR / "trivaana_saas.db"))))
+    PG_POOL_MIN_SIZE: int = Field(default_factory=lambda: int(os.environ.get("PG_POOL_MIN_SIZE", "5")))
+    PG_POOL_MAX_SIZE: int = Field(default_factory=lambda: int(os.environ.get("PG_POOL_MAX_SIZE", "50")))
+    PG_POOL_TIMEOUT: float = Field(default_factory=lambda: float(os.environ.get("PG_POOL_TIMEOUT", "5.0")))
     REDIS_URL: str = Field(default_factory=lambda: os.environ.get("REDIS_URL", ""))
 
     # Object Storage (S3-compatible or local fallback)
@@ -188,6 +191,16 @@ class Settings(BaseModel):
     GOOGLE_CLIENT_ID: str = Field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_ID", ""))
     GOOGLE_CLIENT_SECRET: str = Field(default_factory=lambda: os.environ.get("GOOGLE_CLIENT_SECRET", ""))
 
+    # Indian Legal, DPDP Act 2023 & Startup Entity Disclosure
+    COMPANY_LEGAL_NAME: str = Field(default_factory=lambda: os.environ.get("COMPANY_LEGAL_NAME", "Trivaana AI"))
+    COMPANY_ENTITY_STATUS: str = Field(default_factory=lambda: os.environ.get("COMPANY_ENTITY_STATUS", "pre_incorporation_beta"))
+    COMPANY_GSTIN: str = Field(default_factory=lambda: os.environ.get("COMPANY_GSTIN", ""))
+    COMPANY_JURISDICTION: str = Field(default_factory=lambda: os.environ.get("COMPANY_JURISDICTION", "Hyderabad, Telangana, India"))
+    GRIEVANCE_OFFICER_NAME: str = Field(default_factory=lambda: os.environ.get("GRIEVANCE_OFFICER_NAME", "Grievance Officer, Trivaana AI"))
+    GRIEVANCE_OFFICER_EMAIL: str = Field(default_factory=lambda: os.environ.get("GRIEVANCE_OFFICER_EMAIL", "grievance@trivaana.ai"))
+    NCPR_API_URL: str = Field(default_factory=lambda: os.environ.get("NCPR_API_URL", ""))
+    NCPR_API_KEY: str = Field(default_factory=lambda: os.environ.get("NCPR_API_KEY", ""))
+
     # Server-owned pricing catalog defaults (in integer paise)
     RATE_STANDARD_PAISE_PER_MIN: int = 650    # ₹6.50 / min
     RATE_PREMIUM_PAISE_PER_MIN: int = 850     # ₹8.50 / min
@@ -285,6 +298,8 @@ class Settings(BaseModel):
         if self.ENVIRONMENT.lower() in ("production", "prod"):
             known_dev_secrets = {
                 "trivaana-dev-secret-key-change-in-production-981a27e",
+                "trivaana-dev-compose-jwt-secret-change-me-32chars",
+                "trivaana-dev-compose-vault-key-change-me",
                 "secret",
                 "changeme",
                 "jwtsecret",
@@ -294,6 +309,15 @@ class Settings(BaseModel):
             if not self.JWT_SECRET or len(self.JWT_SECRET) < 32 or self.JWT_SECRET.lower() in known_dev_secrets:
                 raise ValueError(
                     "FATAL SECURITY VIOLATION: Production startup rejected because JWT_SECRET is missing, "
+                    "shorter than 32 characters, or set to a known development default."
+                )
+            if (
+                not self.ENCRYPTION_MASTER_KEY
+                or len(self.ENCRYPTION_MASTER_KEY) < 32
+                or self.ENCRYPTION_MASTER_KEY.lower() in known_dev_secrets
+            ):
+                raise ValueError(
+                    "FATAL SECURITY VIOLATION: Production startup rejected because ENCRYPTION_MASTER_KEY is missing, "
                     "shorter than 32 characters, or set to a known development default."
                 )
         return self

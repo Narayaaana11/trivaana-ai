@@ -154,16 +154,20 @@ class ElevenLabsVoiceProvider(BaseVoiceProvider):
         language: str = "en-IN",
         voice_id: Optional[str] = None,
         stability: float = 0.5,
+        output_format: Optional[str] = None,
     ) -> bytes:
         if not self.is_configured:
             return b"\xff\xfb\x90\x00" + text.encode("utf-8")
 
         target_voice = voice_id or "21m00Tcm4TlvDq8ikWAM"  # Default Rachel
-        cached = _get_tts_cache().get(self.name, target_voice, language, text)
+        cache_voice = f"{target_voice}:{output_format}" if output_format else target_voice
+        cached = _get_tts_cache().get(self.name, cache_voice, language, text)
         if cached:
             return cached
 
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{target_voice}"
+        if output_format:
+            url += f"?output_format={output_format}"
         headers = {
             "xi-api-key": self.api_key,
             "Content-Type": "application/json"
@@ -179,7 +183,7 @@ class ElevenLabsVoiceProvider(BaseVoiceProvider):
 
         resp = requests.post(url, headers=headers, json=payload, timeout=12.0)
         if resp.status_code == 200:
-            _get_tts_cache().set(self.name, target_voice, language, text, resp.content)
+            _get_tts_cache().set(self.name, cache_voice, language, text, resp.content)
             return resp.content
         if resp.status_code == 402:
             raise VoiceProviderPlanError(
@@ -206,6 +210,7 @@ class OpenAIVoiceProvider(BaseVoiceProvider):
         language: str = "en-IN",
         voice_id: Optional[str] = "alloy",
         speed: float = 1.0,
+        response_format: str = "mp3",
     ) -> bytes:
         if not self.is_configured:
             return b"\xff\xfb\x90\x00" + text.encode("utf-8")
@@ -219,7 +224,7 @@ class OpenAIVoiceProvider(BaseVoiceProvider):
             "input": text,
             "voice": voice_id or "alloy",
             "speed": max(0.25, min(4.0, speed)),
-            "response_format": "mp3",
+            "response_format": response_format or "mp3",
         }
         resp = requests.post(self.endpoint, headers=headers, json=payload, timeout=15.0)
         if resp.status_code == 200:

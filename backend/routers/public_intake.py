@@ -11,10 +11,11 @@ import time
 import uuid
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from database.connection import get_db
+from core.config import settings
 from core.security import hash_api_key
 from services.call_service import CallService, normalize_phone
 from services.compliance_service import ComplianceService
@@ -22,14 +23,28 @@ from services.webhook_service import WebhookService
 
 router = APIRouter(prefix="/api/public", tags=["Public Developer API"])
 
-# Simple per-agent sliding window rate limiter (60 req/min default)
-_RATE_BUCKETS: Dict[str, deque] = defaultdict(deque)
+# Sliding window rate limiter keyed by (client_ip, agent_slug) with bounded memory
+_RATE_BUCKETS: Dict[tuple[str, str], deque] = defaultdict(deque)
 RATE_LIMIT_PER_MIN = 60
+_MAX_RATE_BUCKETS = 4096
 
 
-def _check_rate_limit(agent_slug: str):
+def _extract_client_ip(request: Optional[Request]) -> str:
+    if request is not None and getattr(request, "client", None) and getattr(request.client, "host", None):
+        return str(request.client.host)
+    return "unknown"
+
+
+def _check_rate_limit(client_ip: str, agent_slug: str):
     now = time.time()
-    q = _RATE_BUCKETS[agent_slug]
+    bucket_key = (client_ip, agent_slug)
+    if bucket_key not in _RATE_BUCKETS and len(_RATE_BUCKETS) >= _MAX_RATE_BUCKETS:
+        stale_keys = [k for k, dq in _RATE_BUCKETS.items() if not dq or dq[-1] < now - 60]
+        for k in stale_keys:
+            _RATE_BUCKETS.pop(k, None)
+        if len(_RATE_BUCKETS) >= _MAX_RATE_BUCKETS:
+            _RATE_BUCKETS.pop(next(iter(_RATE_BUCKETS)), None)
+    q = _RATE_BUCKETS[bucket_key]
     while q and q[0] < now - 60:
         q.popleft()
     if len(q) >= RATE_LIMIT_PER_MIN:
@@ -94,11 +109,12 @@ def get_lead_intake_schema(
 def public_lead_intake(
     agent_slug: str,
     req: PublicLeadIntakeRequest,
+    request: Request,
     x_intake_secret: Optional[str] = Header(None, alias="X-Intake-Secret"),
     authorization: Optional[str] = Header(None),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    _check_rate_limit(agent_slug)
+    _check_rate_limit(_extract_client_ip(request), agent_slug)
     secret = _extract_intake_secret(x_intake_secret, authorization)
     cur = db.cursor()
     cur.execute("SELECT * FROM agents WHERE slug = ?", (agent_slug,))
@@ -286,4 +302,69 @@ def get_public_call_status(
         "is_sandbox": bool(row["is_sandbox"]),
         "created_at": row["created_at"],
         "ended_at": row["ended_at"],
+    }
+
+
+class PublicContactRequest(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+    email: str = Field(..., pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    company: Optional[str] = Field(None, max_length=160)
+    phone: Optional[str] = Field(None, max_length=32)
+    plan_interest: Optional[str] = Field(None, max_length=64)
+    message: str = Field(..., min_length=5, max_length=3000)
+
+
+@router.post("/contact")
+def submit_public_contact_inquiry(
+    req: PublicContactRequest,
+    request: Request,
+    db: sqlite3.Connection = Depends(get_db),
+):
+    client_ip = _extract_client_ip(request)
+    _check_rate_limit(client_ip, "public_contact")
+
+    inquiry_id = f"inq_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc).isoformat()
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO contact_inquiries (id, name, email, company, phone, plan_interest, message, source_ip, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'new', ?)
+        """,
+        (
+            inquiry_id,
+            req.name.strip(),
+            req.email.strip().lower(),
+            req.company.strip() if req.company else None,
+            req.phone.strip() if req.phone else None,
+            req.plan_interest.strip() if req.plan_interest else None,
+            req.message.strip(),
+            client_ip,
+            now,
+        ),
+    )
+    db.commit()
+    return {
+        "status": "received",
+        "inquiry_id": inquiry_id,
+        "message": "Your inquiry has been logged for our team and a specialist will follow up.",
+    }
+
+
+@router.get("/legal")
+def get_public_legal_metadata():
+    """Return Indian legal, DPDP Act 2023 grievance officer, and entity registration metadata."""
+    return {
+        "company_legal_name": settings.COMPANY_LEGAL_NAME,
+        "entity_status": settings.COMPANY_ENTITY_STATUS,
+        "gstin": settings.COMPANY_GSTIN or None,
+        "jurisdiction": settings.COMPANY_JURISDICTION,
+        "grievance_officer_name": settings.GRIEVANCE_OFFICER_NAME,
+        "grievance_officer_email": settings.GRIEVANCE_OFFICER_EMAIL,
+        "governing_acts": [
+            "Information Technology Act, 2000",
+            "Digital Personal Data Protection Act, 2023",
+            "TRAI TCCCPR, 2018",
+            "Indian Contract Act, 1872",
+        ],
     }

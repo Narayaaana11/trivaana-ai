@@ -57,6 +57,24 @@ async function parseJsonOrThrow(res: Response, fallbackMsg: string): Promise<any
   return res.json();
 }
 
+async function downloadAuthenticatedCsv(url: string, filename: string, fallbackMsg: string): Promise<void> {
+  const res = await authFetch(url);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || err.message || fallbackMsg);
+  }
+  const blob = await res.blob();
+  const objUrl = URL.createObjectURL(blob);
+  try {
+    const a = document.createElement('a');
+    a.href = objUrl;
+    a.download = filename;
+    a.click();
+  } finally {
+    URL.revokeObjectURL(objUrl);
+  }
+}
+
 export const trivaanaApi = {
   // Authentication
   async login(credentials: { email: string; password: string }): Promise<any> {
@@ -307,11 +325,11 @@ export const trivaanaApi = {
     return parseJsonOrThrow(res, 'Failed to update lead');
   },
 
-  async bulkPasteLeads(contacts: any[], listName?: string): Promise<any> {
+  async bulkPasteLeads(contacts: any[], listName?: string, consentConfirmed: boolean = false): Promise<any> {
     const res = await authFetch(`${API_BASE}/leads/bulk-paste`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contacts, list_name: listName }),
+      body: JSON.stringify({ contacts, list_name: listName, consent_confirmed: consentConfirmed }),
     });
     return parseJsonOrThrow(res, 'Failed to import pasted contacts');
   },
@@ -321,12 +339,13 @@ export const trivaanaApi = {
     return parseJsonOrThrow(res, 'Failed to query Lead Scout');
   },
 
-  async uploadLeadsCsv(file: File, columnMapping?: Record<string, string>): Promise<any> {
+  async uploadLeadsCsv(file: File, columnMapping?: Record<string, string>, consentConfirmed: boolean = false): Promise<any> {
     const formData = new FormData();
     formData.append('file', file);
     if (columnMapping) {
       formData.append('column_mapping', JSON.stringify(columnMapping));
     }
+    formData.append('consent_confirmed', String(consentConfirmed));
     const res = await authFetch(`${API_BASE}/leads/upload`, { method: 'POST', body: formData });
     return parseJsonOrThrow(res, 'Failed to upload leads CSV');
   },
@@ -809,6 +828,43 @@ export const trivaanaApi = {
     return parseJsonOrThrow(res, 'Failed to add DNC entry');
   },
 
+  async listDltRegistrations(): Promise<{ registrations: any[]; count: number }> {
+    const res = await authFetch(`${API_BASE}/compliance/dlt`);
+    return parseJsonOrThrow(res, 'Failed to fetch DLT registrations');
+  },
+
+  async registerDltEntity(payload: {
+    entity_name: string;
+    pe_id: string;
+    tm_id?: string;
+    header_id: string;
+    template_id?: string;
+    template_name?: string;
+    template_content?: string;
+    call_category?: string;
+  }): Promise<any> {
+    const res = await authFetch(`${API_BASE}/compliance/dlt`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to register DLT entity');
+  },
+
+  async runNcprScrub(phones?: string[]): Promise<any> {
+    const res = await authFetch(`${API_BASE}/compliance/ncpr/scrub`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phones: phones && phones.length > 0 ? phones : undefined }),
+    });
+    return parseJsonOrThrow(res, 'Failed to run NCPR scrub');
+  },
+
+  async listNcprJobs(): Promise<{ jobs: any[]; count: number }> {
+    const res = await authFetch(`${API_BASE}/compliance/ncpr/jobs`);
+    return parseJsonOrThrow(res, 'Failed to fetch NCPR scrub jobs');
+  },
+
   async getWorkspace(): Promise<any> {
     const res = await authFetch(`${API_BASE}/workspaces/current`);
     return parseJsonOrThrow(res, 'Failed to load workspace settings');
@@ -931,5 +987,93 @@ export const trivaanaApi = {
       body: JSON.stringify({ target_phone: targetPhone, reason }),
     });
     return parseJsonOrThrow(res, 'Failed to initiate warm call transfer');
-  }
+  },
+
+  async downloadCallsCsv(): Promise<void> {
+    return downloadAuthenticatedCsv(`${API_BASE}/calls/export`, 'trivaana_call_history.csv', 'Failed to export call history CSV');
+  },
+
+  async downloadCampaignCsv(campaignId: string): Promise<void> {
+    return downloadAuthenticatedCsv(
+      `${API_BASE}/campaigns/${encodeURIComponent(campaignId)}/export`,
+      `campaign_${campaignId}.csv`,
+      'Failed to export campaign CSV'
+    );
+  },
+
+  async evaluateAgent(agentId: string, minPassRate = 0.75): Promise<any> {
+    const res = await authFetch(`${API_BASE}/voice-engine/evaluate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_id: agentId, min_pass_rate: minPassRate }),
+    });
+    return parseJsonOrThrow(res, 'Failed to run agent evaluation scorecard');
+  },
+
+  async revokeApiKey(keyId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/workspaces/api-keys/${encodeURIComponent(keyId)}`, {
+      method: 'DELETE',
+    });
+    return parseJsonOrThrow(res, 'Failed to revoke API key');
+  },
+
+  async removeMember(memberId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/workspaces/members/${encodeURIComponent(memberId)}`, {
+      method: 'DELETE',
+    });
+    return parseJsonOrThrow(res, 'Failed to remove team member');
+  },
+
+  async acceptWorkspaceInvite(payload: { invite_token: string; full_name: string; password: string }): Promise<any> {
+    const res = await fetch(`${API_BASE}/auth/accept-invite`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await parseJsonOrThrow(res, 'Failed to accept workspace invitation');
+    if (data?.access_token) {
+      setAuthToken(data.access_token);
+    }
+    return data;
+  },
+
+  async submitPublicContact(payload: {
+    name: string;
+    email: string;
+    phone?: string;
+    company?: string;
+    plan_interest?: string;
+    message: string;
+  }): Promise<any> {
+    const res = await fetch(`${API_BASE}/public/contact`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return parseJsonOrThrow(res, 'Failed to submit contact inquiry');
+  },
+
+  async getLeadTimeline(leadId: string): Promise<{ lead: any; timeline: any[] }> {
+    const res = await authFetch(`${API_BASE}/leads/${encodeURIComponent(leadId)}/timeline`);
+    return parseJsonOrThrow(res, 'Failed to fetch lead timeline');
+  },
+
+  async getSubscription(): Promise<{ plan: string; concurrency_limit: number; subscription: any }> {
+    const res = await authFetch(`${API_BASE}/billing/subscription`);
+    return parseJsonOrThrow(res, 'Failed to load subscription');
+  },
+
+  async updateSubscription(planId: string): Promise<any> {
+    const res = await authFetch(`${API_BASE}/billing/subscription`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ plan_id: planId }),
+    });
+    return parseJsonOrThrow(res, 'Failed to update subscription plan');
+  },
+
+  async getAdminUsers(): Promise<{ users: any[] }> {
+    const res = await authFetch(`${API_BASE}/admin/users`);
+    return parseJsonOrThrow(res, 'Failed to load platform users');
+  },
 };

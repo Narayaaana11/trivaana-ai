@@ -1,17 +1,95 @@
-import { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom';
+import { Suspense, lazy, useEffect, useState } from 'react';
+import { BrowserRouter, Routes, Route, useNavigate, useSearchParams } from 'react-router-dom';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { type PublicRoute } from '@/components/landing/LandingPage';
 import { PublicPortal } from '@/apps/public/PublicPortal';
-import { CustomerPortal } from '@/apps/customer/CustomerPortal';
-import { AdminPortal } from '@/apps/admin/AdminPortal';
-import { StaffPortal } from '@/apps/staff/StaffPortal';
 import { LiveCallSimulatorModal } from '@/components/dashboard/LiveCallSimulatorModal';
 import { AuthModal } from '@/components/auth/AuthModal';
 import { DashboardTab } from '@/components/dashboard/AppSidebar';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { queryClient } from '@/lib/queryClient';
 import { useAppStore } from '@/stores/useAppStore';
+
+const CustomerPortal = lazy(() =>
+  import('@/apps/customer/CustomerPortal').then((m) => ({ default: m.CustomerPortal }))
+);
+const AdminPortal = lazy(() =>
+  import('@/apps/admin/AdminPortal').then((m) => ({ default: m.AdminPortal }))
+);
+const StaffPortal = lazy(() =>
+  import('@/apps/staff/StaffPortal').then((m) => ({ default: m.StaffPortal }))
+);
+
+function AcceptInviteRoute({ onAccepted }: { onAccepted: () => void }) {
+  const [params] = useSearchParams();
+  const [inviteToken, setInviteToken] = useState(params.get('token') || '');
+  const [fullName, setFullName] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          setBusy(true);
+          setErr(null);
+          try {
+            await trivaanaApi.acceptWorkspaceInvite({
+              invite_token: inviteToken.trim(),
+              full_name: fullName.trim(),
+              password,
+            });
+            onAccepted();
+          } catch (error: any) {
+            setErr(error.message || 'Unable to accept invitation.');
+          } finally {
+            setBusy(false);
+          }
+        }}
+        className="w-full max-w-md bg-white rounded-3xl border border-slate-200 p-7 space-y-4 shadow-sm text-xs"
+      >
+        <div>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-orange-600">Team Invitation</span>
+          <h1 className="font-display text-2xl font-extrabold text-slate-900 mt-1">Accept Workspace Invitation</h1>
+          <p className="text-slate-500 mt-1">Create your password to join the invited Trivaana AI workspace.</p>
+        </div>
+        {err && <div className="p-2.5 rounded-xl bg-red-50 border border-red-200 text-red-700 font-semibold">{err}</div>}
+        <input
+          required
+          placeholder="Invitation Token"
+          value={inviteToken}
+          onChange={(e) => setInviteToken(e.target.value)}
+          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 font-mono"
+        />
+        <input
+          required
+          placeholder="Full Name"
+          value={fullName}
+          onChange={(e) => setFullName(e.target.value)}
+          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200"
+        />
+        <input
+          required
+          type="password"
+          minLength={6}
+          placeholder="Create a strong password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200"
+        />
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full py-2.5 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold cursor-pointer disabled:opacity-50"
+        >
+          {busy ? 'Joining...' : 'Join Workspace'}
+        </button>
+      </form>
+    </div>
+  );
+}
 
 function resolveInitialPublicRoute(): PublicRoute {
   if (typeof window === 'undefined') return 'home';
@@ -23,6 +101,9 @@ function resolveInitialPublicRoute(): PublicRoute {
   if (p.includes('/product/inbound')) return 'inbound';
   if (p.includes('/contact')) return 'contact';
   if (p.includes('/docs')) return 'docs';
+  if (p.includes('/terms')) return 'terms';
+  if (p.includes('/privacy')) return 'privacy';
+  if (p.includes('/dnd-policy')) return 'dnd-policy';
   return 'home';
 }
 
@@ -86,7 +167,12 @@ function AppShell() {
     handleEnterDashboard('agents');
   };
 
-  const handleSelectPlan = (_planId: string) => {
+  const handleSelectPlan = (planId: string) => {
+    try {
+      if (planId) sessionStorage.setItem('trivaana_selected_plan', planId);
+    } catch {
+      // ignore
+    }
     handleEnterDashboard('billing');
   };
 
@@ -123,6 +209,9 @@ function AppShell() {
             inbound: '/product/inbound',
             contact: '/contact',
             docs: '/docs',
+            terms: '/terms',
+            privacy: '/privacy',
+            'dnd-policy': '/dnd-policy',
           };
           try {
             window.history.replaceState(null, '', routePathMap[route] || '/');
@@ -145,33 +234,47 @@ function AppShell() {
 
   return (
     <div className="min-h-screen bg-white text-slate-900 font-sans antialiased selection:bg-orange-500 selection:text-white">
-      <Routes>
-        <Route
-          path="/admin/*"
-          element={
-            <AdminPortal
-              isSuperAdmin={isSuperAdmin}
-              onExitToCustomer={() => {
-                setView('dashboard');
-                navigate('/');
-              }}
-            />
-          }
-        />
-        <Route
-          path="/staff/*"
-          element={
-            <StaffPortal
-              hasStaffAccess={hasStaffAccess}
-              onExitToCustomer={() => {
-                setView('dashboard');
-                navigate('/');
-              }}
-            />
-          }
-        />
-        <Route path="*" element={mainView} />
-      </Routes>
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-xs text-slate-500">Loading workspace...</div>}>
+        <Routes>
+          <Route
+            path="/accept-invite"
+            element={
+              <AcceptInviteRoute
+                onAccepted={() => {
+                  handleAuthSuccess();
+                  setView('dashboard');
+                  navigate('/');
+                }}
+              />
+            }
+          />
+          <Route
+            path="/admin/*"
+            element={
+              <AdminPortal
+                isSuperAdmin={isSuperAdmin}
+                onExitToCustomer={() => {
+                  setView('dashboard');
+                  navigate('/');
+                }}
+              />
+            }
+          />
+          <Route
+            path="/staff/*"
+            element={
+              <StaffPortal
+                hasStaffAccess={hasStaffAccess}
+                onExitToCustomer={() => {
+                  setView('dashboard');
+                  navigate('/');
+                }}
+              />
+            }
+          />
+          <Route path="*" element={mainView} />
+        </Routes>
+      </Suspense>
 
       <LiveCallSimulatorModal
         isOpen={isSimulatorOpen}

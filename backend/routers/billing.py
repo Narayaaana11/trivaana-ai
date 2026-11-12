@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 import json
 
-from core.dependencies import get_current_tenant, get_db, require_roles
+from core.dependencies import get_current_tenant, get_db, require_roles, require_scope
 from core.config import settings
 from services.billing_service import BillingService, InsufficientBalanceError
 from providers.razorpay_adapter import RazorpayPaymentProvider
@@ -42,7 +42,7 @@ def get_pricing(conn: sqlite3.Connection = Depends(get_db)):
     return BillingService.get_pricing_catalog(conn)
 
 
-@router.get("/transactions")
+@router.get("/transactions", dependencies=[Depends(require_scope("billing:read"))])
 def list_transactions(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -81,7 +81,7 @@ def list_transactions(
     return {"transactions": transactions, "count": count}
 
 
-@router.get("/invoices")
+@router.get("/invoices", dependencies=[Depends(require_scope("billing:read"))])
 def list_invoices(
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
     conn: sqlite3.Connection = Depends(get_db)
@@ -99,7 +99,7 @@ def list_invoices(
     return {"invoices": invoices, "count": len(invoices)}
 
 
-@router.get("/subscription")
+@router.get("/subscription", dependencies=[Depends(require_scope("billing:read"))])
 def get_subscription(
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
     conn: sqlite3.Connection = Depends(get_db)
@@ -114,7 +114,7 @@ def get_subscription(
     }
 
 
-@router.post("/subscription")
+@router.post("/subscription", dependencies=[Depends(require_scope("billing:write"))])
 def update_subscription(
     req: UpdateSubscriptionRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -144,27 +144,33 @@ def update_subscription(
                 description=f"Subscription activation: {req.plan_id.upper()} plan ({meta['included_channels']} channels)",
                 idempotency_key=f"sub_{sub_id}",
                 invoice_id=f"SUB-2026-{sub_id[-6:].upper()}",
+                commit=False,
             )
         except InsufficientBalanceError as e:
+            conn.rollback()
             raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(e))
 
     cur = conn.cursor()
-    cur.execute(
-        "UPDATE tenants SET plan = ?, concurrency_limit = ? WHERE id = ?",
-        (req.plan_id, meta["included_channels"], current_tenant["id"]),
-    )
-    cur.execute(
-        """
-        INSERT INTO subscriptions (id, tenant_id, plan_id, status, monthly_fee_paise, included_channels, current_period_start, current_period_end, created_at)
-        VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
-        """,
-        (sub_id, current_tenant["id"], req.plan_id, meta["monthly_fee_paise"], meta["included_channels"], now.isoformat(), end.isoformat(), now.isoformat()),
-    )
-    conn.commit()
+    try:
+        cur.execute(
+            "UPDATE tenants SET plan = ?, concurrency_limit = ? WHERE id = ?",
+            (req.plan_id, meta["included_channels"], current_tenant["id"]),
+        )
+        cur.execute(
+            """
+            INSERT INTO subscriptions (id, tenant_id, plan_id, status, monthly_fee_paise, included_channels, current_period_start, current_period_end, created_at)
+            VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?)
+            """,
+            (sub_id, current_tenant["id"], req.plan_id, meta["monthly_fee_paise"], meta["included_channels"], now.isoformat(), end.isoformat(), now.isoformat()),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
     return {"status": "updated", "plan": req.plan_id, "concurrency_limit": meta["included_channels"], "subscription_id": sub_id}
 
 
-@router.post("/razorpay-order")
+@router.post("/razorpay-order", dependencies=[Depends(require_scope("billing:write")), Depends(require_roles(["owner", "admin"]))])
 def create_razorpay_order(
     req: CreateOrderRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -186,12 +192,15 @@ def create_razorpay_order(
 
         order["key_id"] = settings.RAZORPAY_KEY_ID or "rzp_test_sandbox_mode"
         return order
+    except RuntimeError as e:
+        conn.rollback()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(e))
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to create payment order: {str(e)}")
 
 
-@router.post("/razorpay-verification")
+@router.post("/razorpay-verification", dependencies=[Depends(require_scope("billing:write")), Depends(require_roles(["owner", "admin"]))])
 def verify_and_credit_payment(
     req: PaymentVerificationRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -317,8 +326,11 @@ async def handle_razorpay_webhook(request: Request, conn: sqlite3.Connection = D
         return {"status": "already_processed", "order_id": order_id}
 
     paid_amount = payment_entity.get("amount")
-    if paid_amount and paid_amount != order["amount_paise"]:
+    if paid_amount is None or int(paid_amount) != int(order["amount_paise"]):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook payment amount mismatch with recorded order.")
+    paid_currency = str(payment_entity.get("currency") or order["currency"] or "INR").upper()
+    if paid_currency != str(order["currency"] or "INR").upper():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Webhook payment currency mismatch with recorded order.")
 
     now = datetime.now(timezone.utc).isoformat()
     amount_paise = order["amount_paise"]
@@ -352,7 +364,7 @@ async def handle_razorpay_webhook(request: Request, conn: sqlite3.Connection = D
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Atomic webhook commit failed: {exc}")
 
 
-@router.post("/sandbox-topup")
+@router.post("/sandbox-topup", dependencies=[Depends(require_scope("billing:write"))])
 def sandbox_topup(
     req: SandboxTopupRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),

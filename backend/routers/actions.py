@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from services.action_service import ActionService
 from services.call_service import normalize_phone
 
@@ -53,7 +53,7 @@ class UpsertMemoryRequest(BaseModel):
     last_appointment: Optional[str] = None
 
 
-@router.get("/agents/{agent_id}/actions")
+@router.get("/agents/{agent_id}/actions", dependencies=[Depends(require_scope("agents:read"))])
 def list_agent_actions(
     agent_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -74,7 +74,7 @@ def list_agent_actions(
     return {"actions": actions, "count": len(actions)}
 
 
-@router.post("/agents/{agent_id}/actions")
+@router.post("/agents/{agent_id}/actions", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_agent_action(
     agent_id: str,
     req: CreateActionRequest,
@@ -85,6 +85,11 @@ def create_agent_action(
     cur.execute("SELECT id FROM agents WHERE id = ? AND tenant_id = ?", (agent_id, tenant["id"]))
     if not cur.fetchone():
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    from services.webhook_service import is_safe_public_url
+    target_url = (req.config or {}).get("url") or (req.config or {}).get("endpoint")
+    if target_url and not is_safe_public_url(str(target_url)):
+        raise HTTPException(status_code=400, detail="Action URL blocked by SSRF security policy: must resolve to a public host")
 
     action_id = f"act_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc).isoformat()
@@ -105,7 +110,7 @@ def create_agent_action(
     return {"status": "success", "action_id": action_id}
 
 
-@router.put("/agents/{agent_id}/actions/{action_id}")
+@router.put("/agents/{agent_id}/actions/{action_id}", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def update_agent_action(
     agent_id: str,
     action_id: str,
@@ -117,6 +122,12 @@ def update_agent_action(
     cur.execute("SELECT id FROM agent_actions WHERE id = ? AND agent_id = ? AND tenant_id = ?", (action_id, agent_id, tenant["id"]))
     if not cur.fetchone():
         raise HTTPException(status_code=404, detail="Action not found")
+
+    if req.config is not None:
+        from services.webhook_service import is_safe_public_url
+        target_url = req.config.get("url") or req.config.get("endpoint")
+        if target_url and not is_safe_public_url(str(target_url)):
+            raise HTTPException(status_code=400, detail="Action URL blocked by SSRF security policy: must resolve to a public host")
 
     now = datetime.now(timezone.utc).isoformat()
     fields = ["updated_at = ?"]
@@ -146,7 +157,7 @@ def update_agent_action(
     return {"status": "success", "action_id": action_id}
 
 
-@router.delete("/agents/{agent_id}/actions/{action_id}")
+@router.delete("/agents/{agent_id}/actions/{action_id}", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def delete_agent_action(
     agent_id: str,
     action_id: str,
@@ -161,7 +172,7 @@ def delete_agent_action(
     return {"status": "deleted", "action_id": action_id}
 
 
-@router.post("/calls/{call_id}/actions/execute")
+@router.post("/calls/{call_id}/actions/execute", dependencies=[Depends(require_scope("calls:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def execute_during_call_action(
     call_id: str,
     req: ExecuteCallActionRequest,
@@ -187,7 +198,7 @@ def execute_during_call_action(
     )
 
 
-@router.get("/caller-memory")
+@router.get("/caller-memory", dependencies=[Depends(require_scope("agents:read"))])
 def list_caller_memories(
     phone: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -209,7 +220,7 @@ def list_caller_memories(
     return {"memories": memories, "count": len(memories)}
 
 
-@router.post("/caller-memory")
+@router.post("/caller-memory", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def upsert_caller_memory(
     req: UpsertMemoryRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -244,7 +255,7 @@ def upsert_caller_memory(
     return {"status": "saved", "memory_id": mem_id, "phone": norm}
 
 
-@router.delete("/caller-memory/{memory_id}")
+@router.delete("/caller-memory/{memory_id}", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def delete_caller_memory(
     memory_id: str,
     tenant: dict = Depends(get_current_tenant),

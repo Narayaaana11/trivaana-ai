@@ -108,6 +108,7 @@ def test_full_saas_e2e_customer_journey(client):
     csv_up = client.post(
         "/api/leads/upload",
         headers=headers,
+        data={"consent_confirmed": "true"},
         files={"file": ("leads.csv", io.BytesIO(csv_content.encode("utf-8")), "text/csv")},
     )
     assert csv_up.status_code == 200

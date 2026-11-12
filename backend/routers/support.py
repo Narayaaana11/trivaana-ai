@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from core.dependencies import get_current_tenant, get_current_user, get_db, require_staff
+from core.dependencies import get_current_tenant, get_current_user, get_db, require_roles, require_scope, require_staff
 from services.audit_service import AuditService
 
 router = APIRouter(prefix="/api", tags=["Support & Staff Portal"])
@@ -35,7 +35,7 @@ class KycReviewRequest(BaseModel):
     notes: Optional[str] = None
 
 
-@router.get("/support/tickets")
+@router.get("/support/tickets", dependencies=[Depends(require_scope("support:read"))])
 def list_tenant_tickets(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -48,7 +48,7 @@ def list_tenant_tickets(
     return {"tickets": [dict(r) for r in cur.fetchall()]}
 
 
-@router.post("/support/tickets")
+@router.post("/support/tickets", dependencies=[Depends(require_scope("support:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_support_ticket(
     req: CreateTicketRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -118,9 +118,13 @@ def staff_update_ticket(
     fields = ["updated_at = ?"]
     params = [now]
     if req.status is not None:
+        if req.status not in ("open", "in_progress", "resolved", "closed"):
+            raise HTTPException(status_code=400, detail="Invalid ticket status")
         fields.append("status = ?")
         params.append(req.status)
     if req.priority is not None:
+        if req.priority not in ("low", "medium", "high", "urgent"):
+            raise HTTPException(status_code=400, detail="Invalid ticket priority")
         fields.append("priority = ?")
         params.append(req.priority)
     if req.assigned_staff_id is not None:
@@ -171,12 +175,14 @@ def staff_review_kyc(
     staff_user: dict = Depends(require_staff),
     db: sqlite3.Connection = Depends(get_db),
 ):
+    if req.kyc_status not in ("verified", "rejected", "pending_review"):
+        raise HTTPException(status_code=400, detail="Invalid kyc_status; expected verified, rejected, or pending_review")
     cur = db.cursor()
     cur.execute("SELECT * FROM phone_numbers WHERE id = ?", (number_id,))
     num = cur.fetchone()
     if not num:
         raise HTTPException(status_code=404, detail="Phone number not found")
-    new_status = "active" if req.kyc_status == "verified" else "pending_kyc"
+    new_status = "active" if req.kyc_status == "verified" else ("rejected" if req.kyc_status == "rejected" else "pending_kyc")
     cur.execute("UPDATE phone_numbers SET kyc_status = ?, status = ? WHERE id = ?", (req.kyc_status, new_status, number_id))
     AuditService.log_event(
         db,
@@ -225,4 +231,60 @@ def staff_audited_tenant_summary(
         "agent_count": ag_cnt,
         "call_stats": c_stats,
     }
+
+
+class DltReviewRequest(BaseModel):
+    status: str  # 'approved', 'rejected', 'pending_review'
+    notes: Optional[str] = None
+
+
+@router.get("/staff/dlt-queue")
+def staff_list_dlt_queue(
+    staff_user: dict = Depends(require_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    cur = db.cursor()
+    cur.execute(
+        """
+        SELECT d.*, t.name as tenant_name
+        FROM dlt_registrations d
+        JOIN tenants t ON d.tenant_id = t.id
+        ORDER BY CASE WHEN d.status = 'pending_review' THEN 0 ELSE 1 END, d.created_at DESC
+        LIMIT 100
+        """
+    )
+    return {"dlt_items": [dict(r) for r in cur.fetchall()]}
+
+
+@router.post("/staff/dlt-queue/{dlt_id}/review")
+def staff_review_dlt(
+    dlt_id: str,
+    req: DltReviewRequest,
+    staff_user: dict = Depends(require_staff),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    if req.status not in ("approved", "rejected", "pending_review"):
+        raise HTTPException(status_code=400, detail="Invalid status; expected approved, rejected, or pending_review")
+    cur = db.cursor()
+    cur.execute("SELECT * FROM dlt_registrations WHERE id = ?", (dlt_id,))
+    item = cur.fetchone()
+    if not item:
+        raise HTTPException(status_code=404, detail="DLT registration not found")
+    now = datetime.now(timezone.utc).isoformat()
+    cur.execute(
+        "UPDATE dlt_registrations SET status = ?, review_notes = ?, reviewed_by = ?, reviewed_at = ? WHERE id = ?",
+        (req.status, req.notes, staff_user["id"], now, dlt_id),
+    )
+    AuditService.log_event(
+        db,
+        action="staff.dlt_reviewed",
+        resource_type="dlt_registration",
+        resource_id=dlt_id,
+        tenant_id=item["tenant_id"],
+        actor_user_id=staff_user["id"],
+        actor_email=staff_user.get("email"),
+        metadata={"status": req.status, "notes": req.notes},
+    )
+    db.commit()
+    return {"status": req.status, "dlt_id": dlt_id}
 

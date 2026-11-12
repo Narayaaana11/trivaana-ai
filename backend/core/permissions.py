@@ -53,7 +53,9 @@ def is_staff_or_admin(user: Dict) -> bool:
 
 
 def api_key_allows_scope(scopes: Iterable[str], required_scope: str) -> bool:
-    scope_set = {str(s).strip().lower() for s in scopes}
+    scope_set = {str(s).strip().lower() for s in (scopes or []) if str(s).strip()}
+    if not scope_set:
+        return False
     if "*" in scope_set:
         return True
     req = required_scope.strip().lower()

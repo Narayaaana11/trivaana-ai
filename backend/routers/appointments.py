@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
-from core.dependencies import get_current_tenant, get_db
+from core.dependencies import get_current_tenant, get_db, require_roles, require_scope
 from services.action_service import ActionService
 from services.call_service import normalize_phone
 
@@ -38,7 +38,7 @@ class UpdateAppointmentRequest(BaseModel):
     notes: Optional[str] = None
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("appointments:read"))])
 def list_appointments(
     status_filter: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -55,7 +55,7 @@ def list_appointments(
     return {"appointments": [dict(r) for r in cur.fetchall()]}
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_scope("appointments:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_appointment(
     req: CreateAppointmentRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -106,7 +106,25 @@ def create_appointment(
         db.rollback()
         raise HTTPException(status_code=409, detail=f"Slot reservation conflict: {exc}")
 
-    calendar_sync = None
+    cur.execute(
+        "SELECT 1 FROM integrations WHERE tenant_id = ? AND provider_key = 'google_calendar' AND status = 'connected'",
+        (tenant["id"],),
+    )
+    gcal_connected = bool(cur.fetchone())
+    call_is_sandbox = False
+    if req.call_id:
+        c_row = cur.execute("SELECT is_sandbox FROM calls WHERE id = ? AND tenant_id = ?", (req.call_id, tenant["id"])).fetchone()
+        call_is_sandbox = bool(c_row["is_sandbox"]) if c_row else False
+
+    effective_sandbox = call_is_sandbox or not gcal_connected
+    cal_args = {
+        "operation": "book_appointment",
+        "title": req.title.strip(),
+        "start": req.scheduled_start.strip(),
+        "end": req.scheduled_end.strip(),
+        "timezone": req.timezone,
+        "notes": req.notes or "",
+    }
     if req.call_id:
         calendar_sync = ActionService.execute_action(
             conn=db,
@@ -114,16 +132,22 @@ def create_appointment(
             call_id=req.call_id,
             action_type="google_calendar",
             action_name="Book Appointment",
-            arguments={
-                "operation": "book_appointment",
-                "title": req.title.strip(),
-                "start": req.scheduled_start.strip(),
-                "end": req.scheduled_end.strip(),
-                "notes": req.notes or "",
-            },
+            arguments=cal_args,
             agent_id=req.agent_id,
-            is_sandbox=True,
+            is_sandbox=effective_sandbox,
         )
+    elif gcal_connected:
+        calendar_sync = ActionService.sync_google_calendar_event(
+            conn=db,
+            tenant_id=tenant["id"],
+            arguments=cal_args,
+            is_sandbox=False,
+        )
+    else:
+        calendar_sync = {
+            "status": "not_configured",
+            "result": {"configured": False, "message": "Google Calendar integration is not connected for this workspace."},
+        }
 
     return {
         "status": "scheduled",
@@ -133,7 +157,7 @@ def create_appointment(
     }
 
 
-@router.patch("/{appointment_id}")
+@router.patch("/{appointment_id}", dependencies=[Depends(require_scope("appointments:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def update_appointment(
     appointment_id: str,
     req: UpdateAppointmentRequest,

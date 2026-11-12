@@ -172,17 +172,11 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
   };
 
   const handleExportCsv = async (campaignId: string) => {
-    const token = localStorage.getItem('trivaana_token');
-    const res = await fetch(`/api/campaigns/${campaignId}/export`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `campaign_${campaignId}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await trivaanaApi.downloadCampaignCsv(campaignId);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Failed to export campaign CSV' });
+    }
   };
 
   return (
@@ -501,7 +495,7 @@ export const CampaignManagerPanel: React.FC<CampaignManagerPanelProps> = ({
                     <button
                       onClick={async () => {
                         const r = await trivaanaApi.processCampaignRetries(selectedCampaign.id);
-                        setFeedback({ type: 'success', message: `Processed ${r.requeued_jobs} due retry job(s).` });
+                        setFeedback({ type: 'success', message: `Processed ${r.requeued_count ?? r.dispatched ?? 0} due retry job(s).` });
                         loadData(selectedCampaign.id);
                       }}
                       className="px-3 py-1.5 rounded-xl bg-slate-100 text-slate-800 text-xs font-bold flex items-center gap-1 cursor-pointer"

@@ -70,6 +70,11 @@ services:
       ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-trivaana-dev-compose-vault-key-change-me}
       DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
       REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
+      TEMPORAL_ADDRESS: ${TEMPORAL_ADDRESS:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,12 +88,16 @@ services:
       dockerfile: voice-engine/Dockerfile
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
+      JWT_SECRET: ${JWT_SECRET:-trivaana-dev-compose-jwt-secret-change-me-32chars}
+      ENCRYPTION_MASTER_KEY: ${ENCRYPTION_MASTER_KEY:-trivaana-dev-compose-vault-key-change-me}
       DATABASE_URL: postgresql://trivaana:${POSTGRES_PASSWORD:-trivaana_dev_password}@postgres:5432/trivaana
       REDIS_URL: redis://redis:6379/0
       LIVEKIT_URL: ${LIVEKIT_URL:-}
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
       SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      DEEPGRAM_API_KEY: ${DEEPGRAM_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     depends_on:

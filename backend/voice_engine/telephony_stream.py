@@ -128,14 +128,16 @@ class TelephonyStreamSession:
 
     def __init__(
         self,
-        conn: sqlite3.Connection,
+        conn: Optional[sqlite3.Connection],
         call_id: str,
         provider: str = "exotel",
         speech_rms_threshold: float = 450.0,
         silence_frames_to_flush: int = 12,
         min_speech_bytes: int = 1600,
+        conn_factory: Any = None,
     ):
         self.conn = conn
+        self._conn_factory = conn_factory
         self.call_id = call_id
         self.provider = (provider or "exotel").lower()
         self.stream_sid: Optional[str] = None
@@ -152,7 +154,16 @@ class TelephonyStreamSession:
         self.barge_in_count = 0
         self.dtmf = DtmfAccumulator()
 
-        self.call_exists, self.tenant_id, self.agent, self.lead_context = self._load_call_context()
+        temp_conn = None
+        if self.conn is None and self._conn_factory is not None:
+            temp_conn = self._conn_factory()
+            self.conn = temp_conn
+        try:
+            self.call_exists, self.tenant_id, self.agent, self.lead_context = self._load_call_context()
+        finally:
+            if temp_conn is not None:
+                self.conn = None
+                temp_conn.close()
 
     def _load_call_context(self):
         cur = self.conn.cursor()
@@ -204,25 +215,48 @@ class TelephonyStreamSession:
     def _build_outbound_frames(self, raw_audio: bytes) -> List[Dict[str, Any]]:
         if not raw_audio:
             return []
-        payload_b64 = self._encode_outbound_media(raw_audio)
-        mark_id = f"trv_{uuid.uuid4().hex[:8]}"
+        pcm = extract_pcm16_from_audio(raw_audio)
+        if self.provider in ("twilio", "plivo"):
+            carrier_bytes = pcm16_to_mulaw(pcm)
+            chunk_size = 160  # 20ms @ 8kHz 8-bit mu-law
+        else:
+            carrier_bytes = pcm
+            chunk_size = 320  # 20ms @ 8kHz 16-bit PCM
+
+        stream_sid = self.stream_sid or self.call_id
         frames: List[Dict[str, Any]] = [
             {
                 "event": "media",
-                "streamSid": self.stream_sid or self.call_id,
-                "media": {"payload": payload_b64},
-            },
+                "streamSid": stream_sid,
+                "media": {"payload": base64.b64encode(carrier_bytes[i : i + chunk_size]).decode("ascii")},
+            }
+            for i in range(0, len(carrier_bytes), chunk_size)
+        ]
+        mark_id = f"trv_{uuid.uuid4().hex[:8]}"
+        frames.append(
             {
                 "event": "mark",
-                "streamSid": self.stream_sid or self.call_id,
+                "streamSid": stream_sid,
                 "mark": {"name": mark_id},
-            },
-        ]
+            }
+        )
         self.ai_speaking = True
         return frames
 
     def handle_event(self, msg: Dict[str, Any]) -> Dict[str, Any]:
         """Process one incoming carrier WebSocket JSON message and return outbound frames + control state."""
+        temp_conn = None
+        if self.conn is None and self._conn_factory is not None:
+            temp_conn = self._conn_factory()
+            self.conn = temp_conn
+        try:
+            return self._handle_event_impl(msg)
+        finally:
+            if temp_conn is not None:
+                self.conn = None
+                temp_conn.close()
+
+    def _handle_event_impl(self, msg: Dict[str, Any]) -> Dict[str, Any]:
         event = (msg.get("event") or "").lower()
         outbound: List[Dict[str, Any]] = []
         should_close = False
@@ -246,6 +280,7 @@ class TelephonyStreamSession:
                     history=self.history,
                     synthesize_audio=True,
                     lead_context=self.lead_context,
+                    telephony_audio=True,
                 )
                 if res.get("audio_base64"):
                     outbound.extend(self._build_outbound_frames(base64.b64decode(res["audio_base64"])))
@@ -318,6 +353,7 @@ class TelephonyStreamSession:
             barge_in=self.barge_in_count > 0,
             synthesize_audio=True,
             lead_context=self.lead_context,
+            telephony_audio=True,
         )
         user_txt = turn.get("user_text", "")
         if user_txt:

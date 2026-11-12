@@ -11,7 +11,7 @@ import sqlite3
 import time
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from core.config import settings
 from core.security import decode_access_token, hash_api_key
 from voice_engine.livekit_bridge import create_livekit_room_token
@@ -37,7 +37,12 @@ class PipelineTurnRequest(BaseModel):
     lead_context: Optional[Dict[str, Any]] = None
 
 
-@router.get("/status")
+class EvaluateAgentRequest(BaseModel):
+    agent_id: str
+    min_pass_rate: float = Field(0.75, ge=0.0, le=1.0)
+
+
+@router.get("/status", dependencies=[Depends(require_scope("voice:read"))])
 def get_voice_engine_status(tenant: dict = Depends(get_current_tenant)):
     worker_caps = get_worker_capabilities()
     return {
@@ -48,11 +53,14 @@ def get_voice_engine_status(tenant: dict = Depends(get_current_tenant)):
             "worker": worker_caps,
         },
         "stt_providers": {
+            "deepgram": get_stt_provider("deepgram").is_configured,
             "openai_whisper": get_stt_provider("openai_whisper").is_configured,
             "faster_whisper": get_stt_provider("faster_whisper").is_configured,
             "indic_conformer": get_stt_provider("indic_conformer").is_configured,
         },
         "llm_providers": {
+            "gemini": settings.has_gemini,
+            "gemini_model": settings.GEMINI_MODEL,
             "openai": settings.has_openai,
             "model": settings.OPENAI_MODEL,
         },
@@ -71,7 +79,7 @@ def get_voice_engine_status(tenant: dict = Depends(get_current_tenant)):
     }
 
 
-@router.post("/livekit-token")
+@router.post("/livekit-token", dependencies=[Depends(require_scope("voice:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def generate_livekit_token(
     req: LiveKitTokenRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -100,7 +108,7 @@ def generate_livekit_token(
     )
 
 
-@router.post("/pipeline-turn")
+@router.post("/pipeline-turn", dependencies=[Depends(require_scope("voice:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def execute_pipeline_turn(
     req: PipelineTurnRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -125,7 +133,7 @@ def execute_pipeline_turn(
     )
 
 
-@router.post("/benchmark")
+@router.post("/benchmark", dependencies=[Depends(require_scope("voice:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def benchmark_voice_pipeline(
     agent_id: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -162,8 +170,31 @@ def benchmark_voice_pipeline(
         "stages": res["latency"],
         "reasoning_mode": res["reasoning_mode"],
         "tts_mode": res["tts_mode"],
-        "is_live_provider": res["reasoning_mode"] == "openai",
+        "is_live_provider": res["reasoning_mode"] in ("gemini", "openai"),
     }
+
+
+@router.post("/evaluate", dependencies=[Depends(require_scope("voice:write")), Depends(require_roles(["owner", "admin", "operator"]))])
+def evaluate_agent_guardrails(
+    req: EvaluateAgentRequest,
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    """Run multilingual, opt-out compliance, and transfer guardrail regression checks for an AI Employee."""
+    from services.eval_service import run_regression_suite
+
+    cur = db.cursor()
+    cur.execute("SELECT * FROM agents WHERE id = ? AND tenant_id = ?", (req.agent_id, tenant["id"]))
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return run_regression_suite(
+        conn=db,
+        tenant_id=tenant["id"],
+        agent=dict(row),
+        min_pass_rate=req.min_pass_rate,
+    )
 
 
 def _resolve_ws_tenant_id(
@@ -172,29 +203,27 @@ def _resolve_ws_tenant_id(
     token: Optional[str] = None,
     api_key: Optional[str] = None,
 ) -> Optional[str]:
-    """Authenticate WebSocket client via JWT Bearer token or X-API-Key/api_key."""
-    cur = db.cursor()
+    """Authenticate WebSocket client via JWT Bearer token or revocable API key (enforcing suspension & token_version)."""
+    from core.dependencies import resolve_user_from_jwt, resolve_user_from_api_key
+
     auth_header = websocket.headers.get("authorization", "")
     bearer = token or (auth_header[7:].strip() if auth_header.lower().startswith("bearer ") else None)
     if bearer:
-        payload = decode_access_token(bearer)
-        if payload and "sub" in payload:
-            cur.execute("SELECT tenant_id FROM users WHERE id = ?", (payload["sub"],))
-            u = cur.fetchone()
+        try:
+            u = resolve_user_from_jwt(db, bearer, require_active_tenant=True)
             if u:
                 return u["tenant_id"]
+        except HTTPException:
+            return None
 
     raw_key = api_key or websocket.headers.get("x-api-key")
     if raw_key:
-        key_hash = hash_api_key(raw_key.strip())
-        cur.execute("SELECT tenant_id FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL", (key_hash,))
-        ak = cur.fetchone()
-        if ak:
-            return ak["tenant_id"]
-        cur.execute("SELECT id FROM tenants WHERE api_key_hash = ?", (key_hash,))
-        t = cur.fetchone()
-        if t:
-            return t["id"]
+        try:
+            ak = resolve_user_from_api_key(db, raw_key)
+            if ak:
+                return ak["tenant_id"]
+        except HTTPException:
+            return None
     return None
 
 
@@ -204,24 +233,30 @@ async def interactive_voice_ws(
     agent_id: str,
     token: Optional[str] = Query(None),
     api_key: Optional[str] = Query(None),
-    db: sqlite3.Connection = Depends(get_db),
 ):
     """Bidirectional WebSocket for authenticated low-latency text/audio conversational testing with barge-in support."""
-    tenant_id = _resolve_ws_tenant_id(websocket, db, token=token, api_key=api_key)
-    if not tenant_id:
-        await websocket.close(code=1008)
-        return
+    import asyncio
+    from database import get_connection
 
-    cur = db.cursor()
-    cur.execute("SELECT * FROM agents WHERE id = ? AND tenant_id = ?", (agent_id, tenant_id))
-    row = cur.fetchone()
-    if not row:
-        await websocket.close(code=1008)
-        return
+    init_db = get_connection()
+    try:
+        tenant_id = _resolve_ws_tenant_id(websocket, init_db, token=token, api_key=api_key)
+        if not tenant_id:
+            await websocket.close(code=1008)
+            return
+
+        cur = init_db.cursor()
+        cur.execute("SELECT * FROM agents WHERE id = ? AND tenant_id = ?", (agent_id, tenant_id))
+        row = cur.fetchone()
+        if not row:
+            await websocket.close(code=1008)
+            return
+        agent = dict(row)
+    finally:
+        init_db.close()
 
     await websocket.accept()
 
-    agent = dict(row)
     history: List[Dict[str, str]] = []
     await websocket.send_json({
         "type": "ready",
@@ -240,15 +275,23 @@ async def interactive_voice_ws(
             if event_type == "stop":
                 break
             user_text = msg.get("text", "")
-            res = RealtimeVoicePipeline.run_turn(
-                conn=db,
-                tenant_id=agent["tenant_id"],
-                agent=agent,
-                user_text=user_text,
-                history=history,
-                barge_in=bool(msg.get("barge_in", False)),
-                synthesize_audio=bool(msg.get("synthesize_audio", False)),
-            )
+
+            def _run_turn_sync():
+                t_db = get_connection()
+                try:
+                    return RealtimeVoicePipeline.run_turn(
+                        conn=t_db,
+                        tenant_id=agent["tenant_id"],
+                        agent=agent,
+                        user_text=user_text,
+                        history=list(history),
+                        barge_in=bool(msg.get("barge_in", False)),
+                        synthesize_audio=bool(msg.get("synthesize_audio", False)),
+                    )
+                finally:
+                    t_db.close()
+
+            res = await asyncio.to_thread(_run_turn_sync)
             history.append({"sender": "caller", "text": user_text})
             history.append({"sender": "ai", "text": res["reply_text"]})
             await websocket.send_json({"type": "response", **res})

@@ -20,6 +20,7 @@ class LeadService:
         csv_text: str,
         filename: str = "upload.csv",
         column_mapping: Optional[Dict[str, str]] = None,
+        consent_confirmed: bool = False,
     ) -> Dict[str, Any]:
         """
         Validates CSV content row-by-row.
@@ -41,8 +42,11 @@ class LeadService:
         cmap = column_mapping or {}
         name_col = cmap.get("name") if cmap.get("name") in headers else next((h for h in headers if h.lower() in ("name", "full_name", "contact_name")), None)
         phone_col = cmap.get("phone") if cmap.get("phone") in headers else next((h for h in headers if h.lower() in ("phone", "mobile", "contact_number", "telephone")), None)
+        email_col = cmap.get("email") if cmap.get("email") in headers else next((h for h in headers if h.lower() in ("email", "email_address")), None)
         city_col = cmap.get("city") if cmap.get("city") in headers else next((h for h in headers if h.lower() in ("city", "location", "town")), None)
         vertical_col = cmap.get("vertical") if cmap.get("vertical") in headers else next((h for h in headers if h.lower() in ("vertical", "industry", "sector")), None)
+        category_col = cmap.get("call_category") if cmap.get("call_category") in headers else next((h for h in headers if h.lower() in ("call_category", "category")), None)
+        consent_col = cmap.get("consent_status") if cmap.get("consent_status") in headers else next((h for h in headers if h.lower() in ("consent_status", "consent")), None)
         notes_col = cmap.get("notes") if cmap.get("notes") in headers else next((h for h in headers if h.lower() in ("notes", "note", "remarks")), None)
 
         if not phone_col:
@@ -59,8 +63,13 @@ class LeadService:
             total_rows += 1
             raw_name = (row.get(name_col) if name_col else "") or ""
             raw_phone = (row.get(phone_col) if phone_col else "") or ""
+            email = ((row.get(email_col) if email_col else "") or "").strip() or None
             city = (row.get(city_col) if city_col else "") or "Hyderabad"
             vertical = (row.get(vertical_col) if vertical_col else "") or "General"
+            call_category = ((row.get(category_col) if category_col else "") or "service").strip().lower()
+            if call_category not in ("service", "transactional", "promotional"):
+                call_category = "service"
+            raw_consent = ((row.get(consent_col) if consent_col else "") or "").strip().lower()
             notes = (row.get(notes_col) if notes_col else "") or "Imported via CSV batch"
 
             # Validation 1: Phone must exist
@@ -90,12 +99,40 @@ class LeadService:
                 errors.append({"row": row_idx, "name": name, "phone": clean_phone, "error": msg, "reason": msg})
                 continue
 
+            # Resolve consent status: require explicit confirmation or row consent evidence
+            if raw_consent in ("opted_out", "revoked"):
+                consent_status = "opted_out"
+                opt_out_flag = 1
+            elif consent_confirmed or raw_consent == "opted_in":
+                consent_status = "opted_in"
+                opt_out_flag = 0
+            else:
+                consent_status = "pending"
+                opt_out_flag = 0
+
             # Insert lead
             lead_id = f"lead_{uuid.uuid4().hex[:8]}"
             cur.execute("""
-            INSERT INTO leads (id, tenant_id, name, phone, city, vertical, status, source, consent_status, opt_out, notes, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending', 'CSV Import', 'opted_in', 0, ?, ?)
-            """, (lead_id, tenant_id, name, clean_phone, city, vertical, notes, now))
+            INSERT INTO leads (id, tenant_id, name, phone, email, city, vertical, status, source, consent_status, call_category, opt_out, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'CSV Import', ?, ?, ?, ?, ?)
+            """, (lead_id, tenant_id, name, clean_phone, email, city, vertical, consent_status, call_category, opt_out_flag, notes, now))
+            if consent_status == "opted_in":
+                cur.execute(
+                    """
+                    INSERT INTO consent_records (id, tenant_id, lead_id, phone, consent_status, consent_source, consent_purpose, call_category, evidence_url_or_ref, recorded_at)
+                    VALUES (?, ?, ?, ?, 'opted_in', ?, 'outbound_contact', ?, ?, ?)
+                    """,
+                    (
+                        f"con_{uuid.uuid4().hex[:8]}",
+                        tenant_id,
+                        lead_id,
+                        clean_phone,
+                        "csv_consent_confirmed" if consent_confirmed else "csv_consent_column",
+                        call_category,
+                        filename,
+                        now,
+                    ),
+                )
             imported_count += 1
 
         conn.commit()

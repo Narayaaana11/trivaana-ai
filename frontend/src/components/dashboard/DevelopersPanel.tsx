@@ -30,6 +30,10 @@ interface DevelopersPanelProps {
 
 export const DevelopersPanel: React.FC<DevelopersPanelProps> = ({ initialSubTab = 'overview' }) => {
   const [subTab, setSubTab] = useState<'overview' | 'keys' | 'webhooks' | 'logs'>(initialSubTab);
+
+  useEffect(() => {
+    setSubTab(initialSubTab);
+  }, [initialSubTab]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [apiKeys, setApiKeys] = useState<any[]>([]);
   const [webhooks, setWebhooks] = useState<any[]>([]);
@@ -206,9 +210,24 @@ export const DevelopersPanel: React.FC<DevelopersPanelProps> = ({ initialSubTab 
                     <DecryptedText text={`${k.key_prefix}***`} /> • Created {k.created_at?.slice(0, 10)}
                   </div>
                 </div>
-                <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${k.revoked_at ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                  {k.revoked_at ? 'Revoked' : 'Active'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${k.revoked_at ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                    {k.revoked_at ? 'Revoked' : 'Active'}
+                  </span>
+                  {!k.revoked_at && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await trivaanaApi.revokeApiKey(k.id);
+                        setFeedback({ type: 'success', message: `Revoked API key ${k.name}.` });
+                        loadAll();
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[11px] cursor-pointer"
+                    >
+                      Revoke
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>

@@ -5,6 +5,7 @@ and approved numbering series checks before outbound dialing.
 """
 
 from datetime import datetime, timezone, timedelta
+import json
 import sqlite3
 import uuid
 from typing import Any, Dict, Optional
@@ -110,6 +111,21 @@ class ComplianceService:
         return {"suppressed": False, "reason": None}
 
     @staticmethod
+    def get_emergency_pause(conn: sqlite3.Connection) -> Dict[str, Any]:
+        """Check whether platform Super Admin has activated the global outbound calling kill switch."""
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value_json FROM platform_settings WHERE key = 'emergency_outbound_pause'")
+            row = cur.fetchone()
+            if row and row["value_json"]:
+                cfg = json.loads(row["value_json"])
+                if cfg.get("paused"):
+                    return {"paused": True, "reason": cfg.get("reason") or "Emergency maintenance"}
+        except Exception:
+            pass
+        return {"paused": False, "reason": None}
+
+    @staticmethod
     def evaluate_pre_call(
         conn: sqlite3.Connection,
         tenant_id: str,
@@ -119,10 +135,33 @@ class ComplianceService:
         is_sandbox: bool = False,
     ) -> Dict[str, Any]:
         """Evaluate all pre-call regulatory checks before dialing."""
+        pause = ComplianceService.get_emergency_pause(conn)
+        if pause["paused"]:
+            return {
+                "allowed": False,
+                "code": "EMERGENCY_KILL_SWITCH",
+                "reason": f"Outbound calling paused by platform administrator: {pause['reason']}",
+            }
+
         policy = ComplianceService.get_policy(conn, tenant_id)
         sup = ComplianceService.is_suppressed(conn, tenant_id, phone)
         if sup["suppressed"]:
             return {"allowed": False, "code": "DNC_OR_OPT_OUT", "reason": sup["reason"]}
+
+        if policy.get("require_explicit_consent", 1) and not is_sandbox:
+            norm = normalize_phone(phone)
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT consent_status FROM leads WHERE tenant_id = ? AND phone = ? LIMIT 1",
+                (tenant_id, norm),
+            )
+            lead = cur.fetchone()
+            if lead and lead["consent_status"] == "pending":
+                return {
+                    "allowed": False,
+                    "code": "CONSENT_PENDING",
+                    "reason": "Lead consent is still pending explicit confirmation before outbound dialing.",
+                }
 
         if call_category == "promotional" and not policy.get("allow_promotional_calls", 0) and not is_sandbox:
             return {
@@ -130,6 +169,15 @@ class ComplianceService:
                 "code": "PROMOTIONAL_CALLS_RESTRICTED",
                 "reason": "Promotional automated calling requires explicit promotional sender/140-series registration and workspace policy enablement.",
             }
+
+        if call_category == "promotional" and policy.get("require_dlt_for_promotional", 0) and not is_sandbox:
+            dlt_check = ComplianceService.check_dlt_readiness(conn, tenant_id, call_category)
+            if not dlt_check["approved"]:
+                return {
+                    "allowed": False,
+                    "code": "DLT_NOT_APPROVED",
+                    "reason": dlt_check["reason"],
+                }
 
         if not bypass_calling_hours and not is_sandbox:
             if not ComplianceService.is_within_calling_hours(
@@ -171,4 +219,111 @@ class ComplianceService:
         )
         conn.commit()
         return {"id": dnc_id, "phone": norm, "status": "added"}
+
+    @staticmethod
+    def check_dlt_readiness(conn: sqlite3.Connection, tenant_id: str, call_category: str = "promotional") -> Dict[str, Any]:
+        """Verify an approved DLT Principal Entity + Header/Template exists for the workspace."""
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT id, entity_name, pe_id, header_id, template_id
+            FROM dlt_registrations
+            WHERE tenant_id = ? AND status = 'approved'
+              AND (call_category = ? OR call_category = 'all')
+            ORDER BY reviewed_at DESC, created_at DESC LIMIT 1
+            """,
+            (tenant_id, call_category),
+        )
+        row = cur.fetchone()
+        if row:
+            return {"approved": True, "registration": dict(row), "reason": None}
+        return {
+            "approved": False,
+            "registration": None,
+            "reason": f"No approved DLT PE/Header registration found for '{call_category}' outreach. Submit and verify DLT registration first.",
+        }
+
+    @staticmethod
+    def scrub_ncpr_numbers(
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        phones: Optional[list[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Scrub phone numbers against workspace DNC, opt-outs, revoked consent, and optional live NCPR API.
+        Persists an auditable ncpr_scrub_jobs record.
+        """
+        import os
+        cur = conn.cursor()
+        if not phones:
+            cur.execute("SELECT phone FROM leads WHERE tenant_id = ? LIMIT 500", (tenant_id,))
+            phones = [r["phone"] for r in cur.fetchall() if r["phone"]]
+
+        ncpr_api_url = (os.environ.get("NCPR_API_URL") or "").strip()
+        provider_mode = "local_registry"
+        external_blocked: set[str] = set()
+        if ncpr_api_url:
+            try:
+                from core.ssrf import validate_external_url
+                import httpx
+                validate_external_url(ncpr_api_url)
+                headers = {}
+                ncpr_key = (os.environ.get("NCPR_API_KEY") or "").strip()
+                if ncpr_key:
+                    headers["Authorization"] = f"Bearer {ncpr_key}"
+                resp = httpx.post(ncpr_api_url, json={"phones": phones}, headers=headers, timeout=8.0)
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    external_blocked = {normalize_phone(p) for p in payload.get("dnd_numbers", [])}
+                    provider_mode = "live_ncpr"
+            except Exception:
+                provider_mode = "local_registry"
+
+        eligible_phones: list[str] = []
+        blocked_details: list[Dict[str, str]] = []
+        for raw in phones:
+            norm = normalize_phone(str(raw))
+            if len(norm) < 10:
+                blocked_details.append({"phone": str(raw), "reason": "invalid_phone"})
+                continue
+            if norm in external_blocked:
+                blocked_details.append({"phone": norm, "reason": "ncpr_dnd_registered"})
+                continue
+            sup = ComplianceService.is_suppressed(conn, tenant_id, norm)
+            if sup["suppressed"]:
+                blocked_details.append({"phone": norm, "reason": sup["reason"] or "suppressed"})
+                continue
+            eligible_phones.append(norm)
+
+        job_id = f"ncpr_{uuid.uuid4().hex[:8]}"
+        now = datetime.now(timezone.utc).isoformat()
+        cur.execute(
+            """
+            INSERT INTO ncpr_scrub_jobs (
+                id, tenant_id, total_checked, blocked_count, eligible_count,
+                provider_mode, results_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job_id,
+                tenant_id,
+                len(phones),
+                len(blocked_details),
+                len(eligible_phones),
+                provider_mode,
+                json.dumps({"blocked_details": blocked_details[:100]}),
+                now,
+            ),
+        )
+        conn.commit()
+        return {
+            "id": job_id,
+            "total_checked": len(phones),
+            "blocked_count": len(blocked_details),
+            "eligible_count": len(eligible_phones),
+            "eligible_phones": eligible_phones,
+            "blocked_details": blocked_details,
+            "provider_mode": provider_mode,
+            "created_at": now,
+        }
 

@@ -13,10 +13,91 @@ import httpx
 
 from core.config import settings
 from core.vault import decrypt_config_json
-from services.webhook_service import is_safe_public_url
+from services.webhook_service import is_safe_public_url, safe_http_request
 
 
 class ActionService:
+    @staticmethod
+    def sync_google_calendar_event(
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        arguments: Dict[str, Any],
+        is_sandbox: bool = False,
+    ) -> Dict[str, Any]:
+        """Synchronize or simulate a Google Calendar action using tenant OAuth credentials."""
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM integrations WHERE tenant_id = ? AND provider_key = 'google_calendar' AND status = 'connected'",
+            (tenant_id,),
+        )
+        conn_row = cur.fetchone()
+        if not conn_row and not settings.has_google_oauth:
+            if is_sandbox:
+                return {
+                    "status": "simulated",
+                    "result": {
+                        "simulated": True,
+                        "action": arguments.get("operation", "book_appointment"),
+                        "slot": arguments.get("slot", arguments.get("start", "Tomorrow 11:00 AM IST")),
+                        "message": "Simulated calendar appointment (Google Calendar OAuth not connected).",
+                    },
+                }
+            return {
+                "status": "not_configured",
+                "result": {"configured": False, "message": "Google Calendar integration is not connected for this workspace."},
+            }
+
+        cfg = decrypt_config_json(conn_row["config_json"] or "{}") if conn_row else {}
+        access_token = cfg.get("access_token")
+        if not access_token:
+            return {
+                "status": "not_configured",
+                "result": {"configured": False, "message": "Google Calendar OAuth access_token missing."},
+            }
+
+        if is_sandbox:
+            return {
+                "status": "simulated",
+                "result": {
+                    "simulated": True,
+                    "action": arguments.get("operation", "book_appointment"),
+                    "slot": arguments.get("slot", arguments.get("start", "Tomorrow 11:00 AM IST")),
+                    "message": "Simulated calendar sync during sandbox call.",
+                },
+            }
+
+        try:
+            op = str(arguments.get("operation") or "list_events").lower()
+            if op == "book_appointment" and arguments.get("start") and arguments.get("end"):
+                resp = httpx.post(
+                    "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                    headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+                    json={
+                        "summary": arguments.get("title", "Trivaana AI Scheduled Meeting"),
+                        "description": arguments.get("notes", ""),
+                        "start": {"dateTime": arguments["start"], "timeZone": arguments.get("timezone", "Asia/Kolkata")},
+                        "end": {"dateTime": arguments["end"], "timeZone": arguments.get("timezone", "Asia/Kolkata")},
+                    },
+                    timeout=8.0,
+                )
+            else:
+                resp = httpx.get(
+                    "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    params={"maxResults": 5},
+                    timeout=8.0,
+                )
+            exec_status = "executed" if resp.status_code in (200, 201) else "failed"
+            return {
+                "status": exec_status,
+                "result": {
+                    "http_status": resp.status_code,
+                    "calendar_response": resp.json() if resp.status_code in (200, 201) else resp.text[:300],
+                },
+            }
+        except Exception as e:
+            return {"status": "failed", "result": {"error": str(e)}}
+
     @staticmethod
     def execute_action(
         conn: sqlite3.Connection,
@@ -35,56 +116,9 @@ class ActionService:
         result: Dict[str, Any] = {}
 
         if action_type == "google_calendar":
-            cur.execute(
-                "SELECT * FROM integrations WHERE tenant_id = ? AND provider_key = 'google_calendar' AND status = 'connected'",
-                (tenant_id,),
-            )
-            conn_row = cur.fetchone()
-            if not conn_row and not settings.has_google_oauth:
-                if is_sandbox:
-                    exec_status = "simulated"
-                    result = {
-                        "simulated": True,
-                        "action": arguments.get("operation", "book_appointment"),
-                        "slot": arguments.get("slot", "Tomorrow 11:00 AM IST"),
-                        "message": "Simulated calendar appointment (Google Calendar OAuth not connected).",
-                    }
-                else:
-                    exec_status = "not_configured"
-                    result = {"configured": False, "message": "Google Calendar integration is not connected for this workspace."}
-            else:
-                cfg = decrypt_config_json(conn_row["config_json"] or "{}") if conn_row else {}
-                access_token = cfg.get("access_token")
-                if access_token:
-                    try:
-                        op = str(arguments.get("operation") or "list_events").lower()
-                        if op == "book_appointment" and arguments.get("start") and arguments.get("end"):
-                            resp = httpx.post(
-                                "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-                                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
-                                json={
-                                    "summary": arguments.get("title", "Trivaana AI Scheduled Meeting"),
-                                    "description": arguments.get("notes", ""),
-                                    "start": {"dateTime": arguments["start"], "timeZone": "Asia/Kolkata"},
-                                    "end": {"dateTime": arguments["end"], "timeZone": "Asia/Kolkata"},
-                                },
-                                timeout=8.0,
-                            )
-                        else:
-                            resp = httpx.get(
-                                "https://www.googleapis.com/calendar/v3/calendars/primary/events",
-                                headers={"Authorization": f"Bearer {access_token}"},
-                                params={"maxResults": 5},
-                                timeout=8.0,
-                            )
-                        exec_status = "executed" if resp.status_code in (200, 201) else "failed"
-                        result = {"http_status": resp.status_code, "calendar_response": resp.json() if resp.status_code in (200, 201) else resp.text[:300]}
-                    except Exception as e:
-                        exec_status = "failed"
-                        result = {"error": str(e)}
-                else:
-                    exec_status = "not_configured"
-                    result = {"configured": False, "message": "Google Calendar OAuth access_token missing."}
+            cal_res = ActionService.sync_google_calendar_event(conn, tenant_id, arguments, is_sandbox=is_sandbox)
+            exec_status = cal_res["status"]
+            result = cal_res["result"]
 
         elif action_type == "whatsapp_template":
             template_name = arguments.get("template_name")
@@ -188,13 +222,13 @@ class ActionService:
                 result = {"error": "Invalid or blocked custom API endpoint URL."}
             else:
                 try:
-                    resp = httpx.request(
+                    req_headers = {"Content-Type": "application/json", **dict(headers)}
+                    resp = safe_http_request(
                         method,
                         endpoint,
-                        json=arguments,
-                        headers=headers,
+                        content=json.dumps(arguments) if method not in ("GET", "HEAD") else None,
+                        headers=req_headers,
                         timeout=min(timeout_s, 15.0),
-                        follow_redirects=False,
                     )
                     exec_status = "executed" if 200 <= resp.status_code < 300 else "failed"
                     result = {"http_status": resp.status_code, "body": resp.text[:500]}
@@ -203,6 +237,9 @@ class ActionService:
                     result = {"error": str(e)}
 
         elif action_type == "call_transfer":
+            from xml.sax.saxutils import escape as _xml_escape
+            from providers import get_telephony_provider
+
             target_number = arguments.get("transfer_number")
             cur.execute("SELECT provider, provider_call_id FROM calls WHERE id = ? AND tenant_id = ?", (call_id, tenant_id))
             call_row = cur.fetchone()
@@ -211,10 +248,47 @@ class ActionService:
                 result = {"error": "Missing call record or transfer target number"}
             elif call_row["provider"] == "mock" or is_sandbox:
                 exec_status = "simulated"
-                result = {"simulated": True, "transfer_to": target_number, "message": "Simulated warm transfer to human agent."}
+                result = {
+                    "simulated": True,
+                    "transfer_to": target_number,
+                    "control_xml": f"<Response><Say>Connecting you to our specialist now.</Say><Dial>{_xml_escape(str(target_number))}</Dial></Response>",
+                    "message": "Simulated warm transfer to human agent.",
+                }
             else:
-                exec_status = "executed"
-                result = {"transfer_to": target_number, "provider": call_row["provider"], "status": "transfer_requested"}
+                prov = (call_row["provider"] or "exotel").lower()
+                tel_provider = get_telephony_provider(prov)
+                if not getattr(tel_provider, "is_configured", False):
+                    exec_status = "not_configured"
+                    result = {
+                        "configured": False,
+                        "transfer_to": target_number,
+                        "provider": prov,
+                        "error": f"Telephony provider '{prov}' is not configured for live call transfer.",
+                    }
+                else:
+                    xfer_res = tel_provider.transfer_call(
+                        provider_call_id=call_row["provider_call_id"] or "",
+                        to_phone=str(target_number),
+                    )
+                    if xfer_res.get("success"):
+                        exec_status = xfer_res.get("status") or "executed"
+                        result = {
+                            "transfer_to": target_number,
+                            "provider": prov,
+                            "provider_call_id": call_row["provider_call_id"],
+                            "control_xml": xfer_res.get("control_xml")
+                            or f"<Response><Say>Connecting you to our specialist now.</Say><Dial>{_xml_escape(str(target_number))}</Dial></Response>",
+                            "status": exec_status,
+                        }
+                    else:
+                        exec_status = xfer_res.get("status") or "failed"
+                        result = {
+                            "transfer_to": target_number,
+                            "provider": prov,
+                            "provider_call_id": call_row["provider_call_id"],
+                            "status": exec_status,
+                            "error": xfer_res.get("error") or "Carrier transfer failed.",
+                        }
 
         elif action_type == "caller_memory":
             phone = arguments.get("phone")

@@ -55,15 +55,23 @@ export const platformService = {
     authJsonFetch<{ tickets: any[] }>(
       `/api/staff/tickets${statusFilter ? `?status_filter=${encodeURIComponent(statusFilter)}` : ''}`
     ),
-  staffUpdateTicket: (id: string, payload: { status?: string; resolution_notes?: string }) =>
-    authJsonFetch(`/api/staff/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
+  staffUpdateTicket: (
+    id: string,
+    payload: { status?: string; assigned_staff_id?: string; resolution_notes?: string }
+  ) => authJsonFetch(`/api/staff/tickets/${id}`, { method: 'PATCH', body: JSON.stringify(payload) }),
   staffListKycQueue: () => authJsonFetch<{ kyc_items: any[] }>('/api/staff/kyc-queue'),
   staffReviewKyc: (numberId: string, payload: { kyc_status: string; notes?: string }) =>
     authJsonFetch(`/api/staff/kyc-queue/${numberId}/review`, { method: 'POST', body: JSON.stringify(payload) }),
+  staffListDltQueue: () => authJsonFetch<{ dlt_items: any[] }>('/api/staff/dlt-queue'),
+  staffReviewDlt: (dltId: string, payload: { status: string; notes?: string }) =>
+    authJsonFetch(`/api/staff/dlt-queue/${dltId}/review`, { method: 'POST', body: JSON.stringify(payload) }),
+  staffGetTenantSummary: (tenantId: string) =>
+    authJsonFetch(`/api/staff/tenants/${encodeURIComponent(tenantId)}/summary`),
 
   // Super Admin Finance, Providers & Kill Switch
   adminFinanceSummary: () => authJsonFetch('/api/admin/finance/summary'),
   adminProvidersHealth: () => authJsonFetch('/api/admin/providers/health'),
+  adminPreflight: () => authJsonFetch('/api/admin/preflight'),
   adminEmergencyKillSwitch: (outboundPaused: boolean, reason: string) =>
     authJsonFetch('/api/admin/emergency/kill-switch', {
       method: 'POST',

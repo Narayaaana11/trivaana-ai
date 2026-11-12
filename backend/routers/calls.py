@@ -7,7 +7,9 @@ CSV exports, carrier callback authentication, TwiML, Exotel Passthru, and media 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+import asyncio
 import csv
+import html
 import io
 import json
 import sqlite3
@@ -15,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 import requests
 
-from core.dependencies import get_current_tenant, get_db
+from core.dependencies import get_current_tenant, get_db, require_roles, require_scope
 from core.config import settings
 from services.call_service import CallService
 from services.billing_service import InsufficientBalanceError
@@ -89,7 +91,7 @@ def _parse_transcript_lines(raw_transcript: str) -> List[Dict[str, Any]]:
     return turns
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("calls:read"))])
 def list_calls(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -136,7 +138,7 @@ def list_calls(
     return {"calls": calls, "count": count, "limit": limit, "offset": offset}
 
 
-@router.get("/active")
+@router.get("/active", dependencies=[Depends(require_scope("calls:read"))])
 def list_active_calls(
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
     conn: sqlite3.Connection = Depends(get_db)
@@ -150,7 +152,7 @@ def list_active_calls(
     return {"active_calls": active, "count": len(active)}
 
 
-@router.get("/export")
+@router.get("/export", dependencies=[Depends(require_scope("calls:read"))])
 def export_calls_csv(
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
     conn: sqlite3.Connection = Depends(get_db)
@@ -176,7 +178,7 @@ def export_calls_csv(
     )
 
 
-@router.get("/{call_id}")
+@router.get("/{call_id}", dependencies=[Depends(require_scope("calls:read"))])
 def get_call(
     call_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -207,10 +209,29 @@ def get_call(
 
     cur.execute("SELECT * FROM call_events WHERE call_id = ? AND tenant_id = ? ORDER BY created_at ASC", (call_id, current_tenant["id"]))
     data["events"] = [dict(e) for e in cur.fetchall()]
+
+    cur.execute(
+        "SELECT summary, sentiment, qualification_score, extracted_fields_json, next_action, created_at FROM call_extractions WHERE call_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1",
+        (call_id, current_tenant["id"]),
+    )
+    ext_row = cur.fetchone()
+    if ext_row:
+        ext_fields = json.loads(ext_row["extracted_fields_json"] or "{}")
+        data["qa_extraction"] = {
+            "qualification_score": ext_row["qualification_score"],
+            "sentiment": ext_row["sentiment"],
+            "summary": ext_row["summary"],
+            "next_action": ext_row["next_action"],
+            "objections": ext_fields.get("objections", []),
+            "competitors_mentioned": ext_fields.get("competitors_mentioned", []),
+            "created_at": ext_row["created_at"],
+        }
+    else:
+        data["qa_extraction"] = None
     return data
 
 
-@router.get("/{call_id}/transcript")
+@router.get("/{call_id}/transcript", dependencies=[Depends(require_scope("calls:read"))])
 def get_call_transcript(
     call_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -237,7 +258,7 @@ def get_call_transcript(
     }
 
 
-@router.get("/{call_id}/recording")
+@router.get("/{call_id}/recording", dependencies=[Depends(require_scope("calls:read"))])
 def get_call_recording(
     call_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -261,7 +282,7 @@ def get_call_recording(
     }
 
 
-@router.post("/{call_id}/analyze")
+@router.post("/{call_id}/analyze", dependencies=[Depends(require_scope("calls:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def analyze_call_post_processing(
     call_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -283,32 +304,47 @@ def analyze_call_post_processing(
     outcome = call["outcome"] or "Completed"
     extracted: Dict[str, Any] = {"contact_name": call["contact_name"], "phone": call["phone"], "language": call["language"]}
     mode = "deterministic"
+    qual_score: Optional[int] = None
 
-    if settings.has_openai and transcript_text:
+    if (settings.has_gemini or settings.has_openai) and transcript_text:
         try:
-            resp = requests.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": "application/json"},
-                json={
-                    "model": settings.OPENAI_MODEL,
-                    "response_format": {"type": "json_object"},
-                    "messages": [
-                        {"role": "system", "content": "Analyze this telecalling transcript and return JSON with keys: summary (string), sentiment ('positive'|'neutral'|'negative'), outcome (string), qualification_score (0-100 int), extracted_fields (object), next_action (string)."},
-                        {"role": "user", "content": transcript_text},
-                    ],
-                },
-                timeout=15.0,
+            from providers.llm_adapter import LLMAdapter
+
+            llm_res = LLMAdapter.complete(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Analyze this telecalling transcript and return strictly JSON with keys: "
+                            "summary (string), sentiment ('positive'|'neutral'|'negative'), outcome (string), "
+                            "qualification_score (0-100 int), extracted_fields (object), next_action (string)."
+                        ),
+                    },
+                    {"role": "user", "content": transcript_text},
+                ],
+                temperature=0.2,
+                max_tokens=320,
+                json_mode=True,
+                trace_name="trivaana.post_call_analysis",
             )
-            if resp.status_code == 200:
-                parsed = json.loads(resp.json()["choices"][0]["message"]["content"])
-                summary = parsed.get("summary", summary)
-                sentiment = parsed.get("sentiment", sentiment)
-                outcome = parsed.get("outcome", outcome)
-                extracted = parsed.get("extracted_fields", extracted)
-                mode = "openai"
+            if llm_res and llm_res.get("text"):
+                raw_json = str(llm_res["text"]).strip()
+                if raw_json.startswith("```"):
+                    raw_json = raw_json.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+                parsed = json.loads(raw_json)
+                if isinstance(parsed, dict):
+                    summary = parsed.get("summary", summary)
+                    sentiment = parsed.get("sentiment", sentiment)
+                    outcome = parsed.get("outcome", outcome)
+                    if isinstance(parsed.get("extracted_fields"), dict):
+                        extracted = parsed["extracted_fields"]
+                    if isinstance(parsed.get("qualification_score"), (int, float)):
+                        qual_score = max(0, min(100, int(parsed["qualification_score"])))
+                    mode = str(llm_res.get("provider") or "llm")
         except Exception:
             pass
-    elif transcript_text:
+
+    if mode == "deterministic" and transcript_text:
         lower = transcript_text.lower()
         if any(w in lower for w in ("yes", "interested", "saturday", "sunday", "book", "schedule", "అవును", "हाँ", "సరే")):
             sentiment = "positive"
@@ -318,6 +354,35 @@ def analyze_call_post_processing(
             sentiment = "negative"
             outcome = "Not Interested"
             summary = f"Caller {call['contact_name']} declined or requested no follow-up."
+
+    if qual_score is None:
+        qual_score = 80 if sentiment == "positive" else (25 if sentiment == "negative" else 50)
+
+    lower_txt = (transcript_text or "").lower()
+    objection_patterns = [
+        ("price", "Pricing / budget concern"),
+        ("expensive", "Cost sensitivity"),
+        ("later", "Timing / call back later"),
+        ("busy", "Customer availability"),
+        ("already", "Existing vendor/solution"),
+        ("not interested", "No current need"),
+    ]
+    objections = list(extracted.get("objections") or [])
+    if not objections:
+        for kw, label in objection_patterns:
+            if kw in lower_txt and label not in objections:
+                objections.append(label)
+
+    competitor_keywords = ("bolna", "vapi", "retell", "bland", "sarvam", "exotel", "kaleyra", "ozonetel")
+    competitors = list(extracted.get("competitors_mentioned") or [])
+    if not competitors:
+        for comp in competitor_keywords:
+            if comp in lower_txt:
+                competitors.append(comp.title())
+
+    extracted["objections"] = objections
+    extracted["competitors_mentioned"] = competitors
+    next_action = outcome
 
     now = datetime.now(timezone.utc).isoformat()
     cur.execute(
@@ -329,13 +394,25 @@ def analyze_call_post_processing(
         INSERT INTO call_extractions (id, call_id, tenant_id, summary, sentiment, qualification_score, extracted_fields_json, next_action, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (f"ext_{uuid.uuid4().hex[:8]}", call_id, current_tenant["id"], summary, sentiment, 80 if sentiment == "positive" else 40, json.dumps(extracted), outcome, now),
+        (f"ext_{uuid.uuid4().hex[:8]}", call_id, current_tenant["id"], summary, sentiment, qual_score, json.dumps(extracted), next_action, now),
     )
     conn.commit()
-    return {"status": "analyzed", "mode": mode, "call_id": call_id, "summary": summary, "sentiment": sentiment, "outcome": outcome, "extracted_data": extracted}
+    return {
+        "status": "analyzed",
+        "mode": mode,
+        "call_id": call_id,
+        "summary": summary,
+        "sentiment": sentiment,
+        "outcome": outcome,
+        "qualification_score": qual_score,
+        "objections": objections,
+        "competitors_mentioned": competitors,
+        "next_action": next_action,
+        "extracted_data": extracted,
+    }
 
 
-@router.post("/instant")
+@router.post("/instant", dependencies=[Depends(require_scope("calls:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def trigger_instant_call(
     req: InstantCallRequest,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),
@@ -437,6 +514,8 @@ async def carrier_callback(
     elif provider_name == "mock":
         if settings.ENVIRONMENT.lower() in ("production", "prod"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Mock carrier events are strictly prohibited in production.")
+    else:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Carrier verification failed: Unknown provider '{provider_name}'.")
 
     incoming_sid = payload.get("CallSid") or payload.get("Sid")
     if incoming_sid and incoming_sid not in (call["provider_call_id"], call["id"]):
@@ -448,12 +527,43 @@ async def carrier_callback(
 
 
 @router.api_route("/twiml/{call_id}", methods=["GET", "POST"])
-def get_twiml_instructions(call_id: str, conn: sqlite3.Connection = Depends(get_db)):
+async def get_twiml_instructions(call_id: str, request: Request, conn: sqlite3.Connection = Depends(get_db)):
     cur = conn.cursor()
     cur.execute("SELECT * FROM calls WHERE id = ?", (call_id,))
     call = cur.fetchone()
-    language = call["language"] if call else "te-IN"
+    if not call:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call session not found")
+
     from providers.twilio_adapter import TwilioTelephonyProvider
+
+    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+    sig = request.headers.get("X-Twilio-Signature") or request.headers.get("x-twilio-signature", "")
+    token = request.query_params.get("token")
+    token_ok = bool(token and TwilioTelephonyProvider.verify_stream_token(call_id, token))
+
+    sig_ok = False
+    if sig:
+        payload = dict(request.query_params)
+        if request.method == "POST":
+            try:
+                payload.update(dict(await request.form()))
+            except Exception:
+                pass
+        tw_url = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/calls/twiml/{call_id}"
+        sig_ok = TwilioTelephonyProvider().verify_request(tw_url, payload, sig)
+
+    is_sandbox_call = bool(call["is_sandbox"])
+    if is_prod or settings.has_twilio or not is_sandbox_call:
+        if not (token_ok or sig_ok):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Carrier verification failed: Twilio signature or signed capability token required.",
+            )
+
+    if call["provider"] and call["provider"].lower() != "twilio" and not is_sandbox_call and not token_ok:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Call provider mismatch for TwiML.")
+
+    language = call["language"] or "te-IN"
     twiml_xml = TwilioTelephonyProvider.generate_twiml(call_id=call_id, language=language)
     return Response(content=twiml_xml, media_type="application/xml")
 
@@ -469,16 +579,66 @@ async def handle_twiml_gather(call_id: str, request: Request, conn: sqlite3.Conn
         if not provider.verify_request(url, payload, sig):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Twilio signature")
 
-    speech_result = payload.get("SpeechResult", "")
+    speech_result = (payload.get("SpeechResult") or "").strip()
     cur = conn.cursor()
     cur.execute("SELECT * FROM calls WHERE id = ?", (call_id,))
     call = cur.fetchone()
 
     if call and speech_result:
-        existing_transcript = call["transcript"] or ""
-        updated_transcript = f"{existing_transcript}\nUser: {speech_result}\nAgent: ధన్యవాదాలు! మీ వినతి స్వీకరించబడింది."
-        cur.execute("UPDATE calls SET transcript = ? WHERE id = ?", (updated_transcript.strip(), call_id))
-        conn.commit()
+        from voice_engine.pipeline import RealtimeVoicePipeline
+        from database import get_connection
+
+        def _execute_gather_turn():
+            t_conn = get_connection()
+            try:
+                t_cur = t_conn.cursor()
+                agent_dict: Dict[str, Any] = {
+                    "id": call["agent_id"],
+                    "language": call["language"] or "te-IN",
+                    "provider": "sarvam",
+                }
+                if call["agent_id"]:
+                    t_cur.execute("SELECT * FROM agents WHERE id = ? AND tenant_id = ?", (call["agent_id"], call["tenant_id"]))
+                    ag = t_cur.fetchone()
+                    if ag:
+                        agent_dict = dict(ag)
+
+                turn_res = RealtimeVoicePipeline.run_turn(
+                    conn=t_conn,
+                    tenant_id=call["tenant_id"],
+                    agent=agent_dict,
+                    user_text=speech_result,
+                    call_id=call_id,
+                    synthesize_audio=False,
+                )
+                reply_txt = (turn_res.get("reply_text") or "ధన్యవాదాలు! మీ వినతి స్వీకరించబడింది.").strip()
+                existing_transcript = call["transcript"] or ""
+                updated_transcript = f"{existing_transcript}\nUser: {speech_result}\nAgent: {reply_txt}"
+                t_cur.execute("UPDATE calls SET transcript = ? WHERE id = ?", (updated_transcript.strip(), call_id))
+                t_conn.commit()
+                return turn_res, agent_dict, reply_txt
+            finally:
+                t_conn.close()
+
+        turn, agent_dict, reply_text = await asyncio.to_thread(_execute_gather_turn)
+
+        lang = turn.get("language") or agent_dict.get("language") or "te-IN"
+        voice_map = {"te-IN": "Polly.Aditi", "hi-IN": "Polly.Aditi", "en-IN": "Polly.Raveena"}
+        voice = voice_map.get(lang, "Polly.Aditi")
+        tw_lang = lang if lang in voice_map else "te-IN"
+        gather_action = html.escape(f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/calls/twiml-gather/{call_id}")
+        safe_reply = html.escape(reply_text)
+        response_twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            '<Response>\n'
+            f'    <Gather input="speech" language="{tw_lang}" timeout="5" action="{gather_action}" method="POST">\n'
+            f'        <Say voice="{voice}" language="{tw_lang}">{safe_reply}</Say>\n'
+            '    </Gather>\n'
+            '    <Say voice="Polly.Aditi" language="te-IN">ధన్యవాదాలు! త్రివాణా ఏఐ మీకు శుభదినం కోరుకుంటోంది.</Say>\n'
+            '    <Hangup/>\n'
+            '</Response>'
+        )
+        return Response(content=response_twiml, media_type="application/xml")
 
     closing_twiml = (
         '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -491,34 +651,108 @@ async def handle_twiml_gather(call_id: str, request: Request, conn: sqlite3.Conn
 
 
 @router.api_route("/exotel-passthru/{call_id}", methods=["GET", "POST"])
-def get_exotel_passthru(call_id: str, conn: sqlite3.Connection = Depends(get_db)):
+async def get_exotel_passthru(call_id: str, request: Request, conn: sqlite3.Connection = Depends(get_db)):
     cur = conn.cursor()
     cur.execute("SELECT * FROM calls WHERE id = ?", (call_id,))
     call = cur.fetchone()
-    language = call["language"] if call else "te-IN"
+    if not call:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call session not found")
+
     from providers.exotel_adapter import ExotelTelephonyProvider
+
+    is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
+    is_sandbox_call = bool(call["is_sandbox"])
+    if is_prod or settings.has_exotel or not is_sandbox_call:
+        params = dict(request.query_params)
+        if request.method == "POST":
+            try:
+                ct = request.headers.get("content-type", "")
+                if "application/json" in ct:
+                    params.update(await request.json())
+                else:
+                    params.update(dict(await request.form()))
+            except Exception:
+                pass
+        params["_call_id"] = call_id
+        ex_provider = ExotelTelephonyProvider()
+        token = params.get("token")
+        tok_ok = bool(token and ExotelTelephonyProvider.verify_stream_token(call_id, token))
+        if not (tok_ok or ex_provider.verify_request(dict(request.headers), params)):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Carrier verification failed: Exotel authentication or signed capability token required.",
+            )
+
+    language = call["language"] or "te-IN"
     return ExotelTelephonyProvider.generate_passthru_response(call_id=call_id, language=language)
 
 
 @router.api_route("/plivo-xml/{call_id}", methods=["GET", "POST"])
-def get_plivo_stream_xml(call_id: str, conn: sqlite3.Connection = Depends(get_db)):
+async def get_plivo_stream_xml(call_id: str, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    from providers.plivo_adapter import PlivoTelephonyProvider
+    provider = PlivoTelephonyProvider()
+    params = dict(request.query_params)
+    if request.method == "POST":
+        ct = request.headers.get("content-type", "")
+        if "application/json" in ct:
+            try:
+                params.update(await request.json())
+            except Exception:
+                pass
+        else:
+            try:
+                params.update(dict(await request.form()))
+            except Exception:
+                pass
+    params["_call_id"] = call_id
+    cb_url = f"{settings.PUBLIC_BASE_URL.rstrip('/')}/api/calls/plivo-xml/{call_id}"
+    if not provider.verify_request(dict(request.headers), params, url=cb_url):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Carrier verification failed: Invalid Plivo stream XML authentication.",
+        )
+
     cur = conn.cursor()
     cur.execute("SELECT * FROM calls WHERE id = ?", (call_id,))
     call = cur.fetchone()
+    if call and call["provider"] and call["provider"].lower() != "plivo" and not call["is_sandbox"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Call provider mismatch for Plivo XML.")
     language = call["language"] if call else "te-IN"
-    from providers.plivo_adapter import PlivoTelephonyProvider
-    xml = PlivoTelephonyProvider().generate_stream_xml(call_id=call_id, language=language)
+    xml = provider.generate_stream_xml(call_id=call_id, language=language)
     return Response(content=xml, media_type="application/xml")
 
 
 @router.api_route("/vobiz-xml/{call_id}", methods=["GET", "POST"])
-def get_vobiz_stream_xml(call_id: str, conn: sqlite3.Connection = Depends(get_db)):
+async def get_vobiz_stream_xml(call_id: str, request: Request, conn: sqlite3.Connection = Depends(get_db)):
+    from providers.vobiz_adapter import VobizTelephonyProvider
+    provider = VobizTelephonyProvider()
+    params = dict(request.query_params)
+    if request.method == "POST":
+        ct = request.headers.get("content-type", "")
+        if "application/json" in ct:
+            try:
+                params.update(await request.json())
+            except Exception:
+                pass
+        else:
+            try:
+                params.update(dict(await request.form()))
+            except Exception:
+                pass
+    params["_call_id"] = call_id
+    if not provider.verify_request(dict(request.headers), params):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Carrier verification failed: Invalid Vobiz stream XML authentication.",
+        )
+
     cur = conn.cursor()
     cur.execute("SELECT * FROM calls WHERE id = ?", (call_id,))
     call = cur.fetchone()
+    if call and call["provider"] and call["provider"].lower() != "vobiz" and not call["is_sandbox"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Call provider mismatch for Vobiz XML.")
     language = call["language"] if call else "te-IN"
-    from providers.vobiz_adapter import VobizTelephonyProvider
-    xml = VobizTelephonyProvider().generate_stream_xml(call_id=call_id, language=language)
+    xml = provider.generate_stream_xml(call_id=call_id, language=language)
     return Response(content=xml, media_type="application/xml")
 
 
@@ -527,7 +761,7 @@ class WarmTransferRequest(BaseModel):
     reason: Optional[str] = Field("Caller requested human escalation")
 
 
-@router.post("/{call_id}/transfer")
+@router.post("/{call_id}/transfer", dependencies=[Depends(require_scope("calls:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def transfer_call_to_human(
     call_id: str,
     req: WarmTransferRequest,
@@ -540,7 +774,7 @@ def transfer_call_to_human(
     if not call:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call record not found")
 
-    from xml.sax.saxutils import escape as xml_escape
+    from services.action_service import ActionService
     from services.call_service import normalize_phone
 
     safe_phone = normalize_phone(req.target_phone)
@@ -551,16 +785,27 @@ def transfer_call_to_human(
     now = datetime.now(timezone.utc).isoformat()
     transfer_id = f"xfer_{uuid.uuid4().hex[:8]}"
     provider_name = (call["provider"] or "mock").lower()
-    twiml_transfer = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        "<Response>\n"
-        '    <Say language="en-IN">Connecting you with our specialist now.</Say>\n'
-        f'    <Dial>{xml_escape(safe_phone)}</Dial>\n'
-        "</Response>"
+
+    action_res = ActionService.execute_action(
+        conn=conn,
+        tenant_id=current_tenant["id"],
+        call_id=call_id,
+        action_type="call_transfer",
+        action_name="Warm Transfer",
+        arguments={"transfer_number": safe_phone, "reason": req.reason or ""},
+        agent_id=call["agent_id"],
+        is_sandbox=bool(call["is_sandbox"]),
     )
+    exec_status = action_res.get("status", "failed")
+    if exec_status not in ("executed", "simulated"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=action_res.get("result", {}).get("error") or f"Call transfer {exec_status} for provider '{provider_name}'.",
+        )
+
     cur.execute(
         "UPDATE calls SET outcome = ?, summary = COALESCE(summary, ?) WHERE id = ?",
-        ("Transferred", f"Transferred to {req.target_phone}: {req.reason}", call_id),
+        ("Transferred", f"Transferred to {safe_phone}: {req.reason}", call_id),
     )
     cur.execute(
         "INSERT INTO call_events (id, call_id, tenant_id, event_type, payload_json, created_at) VALUES (?, ?, ?, 'call.transfer_initiated', ?, ?)",
@@ -568,18 +813,19 @@ def transfer_call_to_human(
             f"cev_{uuid.uuid4().hex[:8]}",
             call_id,
             current_tenant["id"],
-            json.dumps({"transfer_id": transfer_id, "target_phone": req.target_phone, "reason": req.reason, "provider": provider_name}),
+            json.dumps({"transfer_id": transfer_id, "target_phone": safe_phone, "reason": req.reason, "provider": provider_name, "execution_status": exec_status}),
             now,
         ),
     )
     conn.commit()
     return {
-        "status": "transfer_initiated",
+        "status": "simulated" if exec_status == "simulated" else "transfer_initiated",
+        "execution_status": exec_status,
         "transfer_id": transfer_id,
         "call_id": call_id,
-        "target_phone": req.target_phone,
+        "target_phone": safe_phone,
         "provider": provider_name,
-        "control_xml": twiml_transfer,
+        "control_xml": action_res.get("result", {}).get("control_xml"),
     }
 
 
@@ -589,50 +835,70 @@ async def websocket_call_stream(
     call_id: str,
     token: Optional[str] = Query(None),
     provider: str = Query("exotel"),
-    conn: sqlite3.Connection = Depends(get_db),
 ):
     import hmac as _hmac
+    from database import get_connection
+
     prov = (provider or "exotel").lower()
     is_prod = settings.ENVIRONMENT.lower() in ("production", "prod")
-    if prov == "exotel" and (settings.has_exotel or is_prod):
-        from providers.exotel_adapter import ExotelTelephonyProvider
-        if not ExotelTelephonyProvider.verify_stream_token(call_id, token):
-            await websocket.close(code=1008)
-            return
-    elif prov == "plivo" and (settings.has_plivo or is_prod):
-        from providers.plivo_adapter import PlivoTelephonyProvider
-        expected = PlivoTelephonyProvider().build_stream_token(call_id)
-        if not token or not _hmac.compare_digest(expected, str(token)):
-            await websocket.close(code=1008)
-            return
-    elif prov == "vobiz" and (settings.has_vobiz or is_prod):
-        from providers.vobiz_adapter import VobizTelephonyProvider
-        expected = VobizTelephonyProvider().build_stream_token(call_id)
-        if not token or not _hmac.compare_digest(expected, str(token)):
-            await websocket.close(code=1008)
-            return
-    elif is_prod:
-        # In production, any non-carrier-verified stream requires an authenticated tenant token
-        from routers.voice_engine import _resolve_ws_tenant_id
-        tenant_id = _resolve_ws_tenant_id(websocket, conn, token=token)
-        if not tenant_id:
-            await websocket.close(code=1008)
-            return
+
+    conn = get_connection()
+    try:
         cur = conn.cursor()
-        cur.execute("SELECT 1 FROM calls WHERE id = ? AND tenant_id = ?", (call_id, tenant_id))
-        if not cur.fetchone():
+        cur.execute("SELECT id, tenant_id, provider, is_sandbox FROM calls WHERE id = ?", (call_id,))
+        call = cur.fetchone()
+        if is_prod and not call:
             await websocket.close(code=1008)
             return
+
+        is_virtual_call = bool(call and (call["is_sandbox"] or (call["provider"] or "").lower() in ("mock", "sandbox", "")))
+        if call and call["provider"] and not is_virtual_call and call["provider"].lower() != prov:
+            await websocket.close(code=1008)
+            return
+
+        require_strict_auth = is_prod or (call is not None and not is_virtual_call) or (token is not None)
+        if prov == "exotel" and (settings.has_exotel or require_strict_auth):
+            from providers.exotel_adapter import ExotelTelephonyProvider
+            if not ExotelTelephonyProvider.verify_stream_token(call_id, token):
+                await websocket.close(code=1008)
+                return
+        elif prov == "twilio" and (settings.has_twilio or require_strict_auth):
+            from providers.twilio_adapter import TwilioTelephonyProvider
+            if not TwilioTelephonyProvider.verify_stream_token(call_id, token):
+                await websocket.close(code=1008)
+                return
+        elif prov == "plivo":
+            from providers.plivo_adapter import PlivoTelephonyProvider
+            expected = PlivoTelephonyProvider().build_stream_token(call_id)
+            if not token or not _hmac.compare_digest(expected, str(token)):
+                await websocket.close(code=1008)
+                return
+        elif prov == "vobiz":
+            from providers.vobiz_adapter import VobizTelephonyProvider
+            expected = VobizTelephonyProvider().build_stream_token(call_id)
+            if not token or not _hmac.compare_digest(expected, str(token)):
+                await websocket.close(code=1008)
+                return
+        elif prov not in ("exotel", "twilio"):
+            from routers.voice_engine import _resolve_ws_tenant_id
+            tenant_id = _resolve_ws_tenant_id(websocket, conn, token=token)
+            if not tenant_id or not call or call["tenant_id"] != tenant_id:
+                await websocket.close(code=1008)
+                return
+    finally:
+        conn.close()
 
     await websocket.accept()
     from voice_engine.telephony_stream import TelephonyStreamSession
 
-    session = TelephonyStreamSession(conn=conn, call_id=call_id, provider=prov)
+    session = TelephonyStreamSession(conn=None, call_id=call_id, provider=prov, conn_factory=get_connection)
+    ws_lock = asyncio.Lock()
     try:
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
-            result = session.handle_event(msg)
+            async with ws_lock:
+                result = await asyncio.to_thread(session.handle_event, msg)
             for out_frame in result.get("outbound", []):
                 await websocket.send_text(json.dumps(out_frame))
             if result.get("should_close"):
@@ -646,7 +912,7 @@ async def websocket_call_stream(
             pass
 
 
-@router.post("/{call_id}/whatsapp")
+@router.post("/{call_id}/whatsapp", dependencies=[Depends(require_scope("calls:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def send_post_call_whatsapp(
     call_id: str,
     current_tenant: Dict[str, Any] = Depends(get_current_tenant),

@@ -11,7 +11,7 @@ import json
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, require_roles, ROLE_HIERARCHY
+from core.dependencies import get_current_tenant, require_roles, require_scope, ROLE_HIERARCHY
 from core.security import hash_api_key
 from services.audit_service import AuditService
 from services.storage_service import StorageService
@@ -44,7 +44,7 @@ class CreateApiKeyRequest(BaseModel):
     scopes: List[str] = ["*"]
 
 
-@router.get("/workspaces/current")
+@router.get("/workspaces/current", dependencies=[Depends(require_scope("workspace:read"))])
 def get_workspace(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
@@ -68,7 +68,7 @@ def get_workspace(
     }
 
 
-@router.put("/workspaces/current")
+@router.put("/workspaces/current", dependencies=[Depends(require_scope("workspace:write"))])
 def update_workspace(
     req: UpdateWorkspaceRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -109,7 +109,7 @@ def update_workspace(
     return {"status": "success", "message": "Workspace settings updated"}
 
 
-@router.get("/workspaces/members")
+@router.get("/workspaces/members", dependencies=[Depends(require_scope("workspace:read"))])
 def list_members(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
@@ -123,7 +123,7 @@ def list_members(
     return {"members": members, "count": len(members)}
 
 
-@router.post("/workspaces/members/invite")
+@router.post("/workspaces/members/invite", dependencies=[Depends(require_scope("workspace:write"))])
 def invite_member(
     req: InviteMemberRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -173,7 +173,7 @@ def invite_member(
     }
 
 
-@router.put("/workspaces/members/{member_id}")
+@router.put("/workspaces/members/{member_id}", dependencies=[Depends(require_scope("workspace:write"))])
 def update_member_role(
     member_id: str,
     req: UpdateMemberRoleRequest,
@@ -184,32 +184,38 @@ def update_member_role(
     role = req.role.lower()
     if role not in VALID_ROLES:
         raise HTTPException(status_code=400, detail=f"Invalid role '{req.role}'")
+    next_status = req.status.lower() if req.status else None
+    if next_status is not None and next_status not in ("active", "suspended"):
+        raise HTTPException(status_code=400, detail=f"Invalid status '{req.status}'")
 
     cur = db.cursor()
     cur.execute("SELECT * FROM workspace_members WHERE id = ? AND tenant_id = ?", (member_id, tenant["id"]))
     member = cur.fetchone()
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    if member["role"] == "owner" and current_user.get("role") != "owner":
+    actor_role = (current_user.get("role") or "").lower()
+    if member["role"] == "owner" and actor_role != "owner":
         raise HTTPException(status_code=403, detail="Only workspace owner can modify owner role")
-    if role == "owner" and current_user.get("role") != "owner":
+    if member["role"] == "admin" and actor_role != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owner can modify another admin")
+    if role == "owner" and actor_role != "owner":
         raise HTTPException(status_code=403, detail="Only workspace owner can grant owner role")
 
     now = datetime.now(timezone.utc).isoformat()
     cur.execute(
         "UPDATE workspace_members SET role = ?, status = COALESCE(?, status), updated_at = ? WHERE id = ? AND tenant_id = ?",
-        (role, req.status, now, member_id, tenant["id"])
+        (role, next_status, now, member_id, tenant["id"])
     )
     if member["user_id"]:
         cur.execute(
-            "UPDATE users SET role = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ? AND tenant_id = ?",
-            (role, member["user_id"], tenant["id"]),
+            "UPDATE users SET role = ?, status = COALESCE(?, status), token_version = COALESCE(token_version, 1) + 1 WHERE id = ? AND tenant_id = ?",
+            (role, next_status, member["user_id"], tenant["id"]),
         )
     db.commit()
     return {"status": "success", "member_id": member_id, "role": role}
 
 
-@router.delete("/workspaces/members/{member_id}")
+@router.delete("/workspaces/members/{member_id}", dependencies=[Depends(require_scope("workspace:write"))])
 def remove_member(
     member_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -223,6 +229,10 @@ def remove_member(
         raise HTTPException(status_code=404, detail="Member not found")
     if member["role"] == "owner":
         raise HTTPException(status_code=400, detail="Cannot remove workspace owner")
+    if member["role"] == "admin" and (current_user.get("role") or "").lower() != "owner":
+        raise HTTPException(status_code=403, detail="Only workspace owner can remove an admin")
+    if member["user_id"] and member["user_id"] == current_user.get("id"):
+        raise HTTPException(status_code=400, detail="Cannot remove yourself from workspace")
 
     if member["user_id"]:
         cur.execute(
@@ -234,7 +244,7 @@ def remove_member(
     return {"status": "removed", "member_id": member_id}
 
 
-@router.get("/workspaces/api-keys")
+@router.get("/workspaces/api-keys", dependencies=[Depends(require_scope("workspace:read")), Depends(require_roles(["owner", "admin"]))])
 def list_api_keys(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
@@ -252,7 +262,7 @@ def list_api_keys(
     return {"api_keys": keys, "count": len(keys)}
 
 
-@router.post("/workspaces/api-keys")
+@router.post("/workspaces/api-keys", dependencies=[Depends(require_scope("workspace:write"))])
 def create_api_key(
     req: CreateApiKeyRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -289,7 +299,7 @@ def create_api_key(
     }
 
 
-@router.delete("/workspaces/api-keys/{key_id}")
+@router.delete("/workspaces/api-keys/{key_id}", dependencies=[Depends(require_scope("workspace:write"))])
 def revoke_api_key(
     key_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -308,7 +318,7 @@ def revoke_api_key(
     return {"status": "revoked", "key_id": key_id}
 
 
-@router.get("/notifications")
+@router.get("/notifications", dependencies=[Depends(require_scope("workspace:read"))])
 def list_notifications(
     unread_only: bool = False,
     tenant: dict = Depends(get_current_tenant),
@@ -326,7 +336,7 @@ def list_notifications(
     return {"notifications": items, "unread_count": unread_count}
 
 
-@router.post("/notifications/{notif_id}/read")
+@router.post("/notifications/{notif_id}/read", dependencies=[Depends(require_scope("workspace:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def mark_notification_read(
     notif_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -338,7 +348,7 @@ def mark_notification_read(
     return {"status": "read", "notification_id": notif_id}
 
 
-@router.post("/notifications/read-all")
+@router.post("/notifications/read-all", dependencies=[Depends(require_scope("workspace:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def mark_all_notifications_read(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db)
@@ -349,7 +359,7 @@ def mark_all_notifications_read(
     return {"status": "all_read"}
 
 
-@router.get("/audit-logs")
+@router.get("/audit-logs", dependencies=[Depends(require_scope("workspace:read")), Depends(require_roles(["owner", "admin"]))])
 def list_tenant_audit_logs(
     limit: int = 100,
     tenant: dict = Depends(get_current_tenant),
@@ -368,7 +378,7 @@ def list_tenant_audit_logs(
     return {"audit_logs": logs, "count": len(logs)}
 
 
-@router.get("/media/{storage_key:path}")
+@router.get("/media/{storage_key:path}", dependencies=[Depends(require_scope("workspace:read"))])
 def get_tenant_media_file(
     storage_key: str,
     tenant: dict = Depends(get_current_tenant),

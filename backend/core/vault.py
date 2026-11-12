@@ -12,8 +12,12 @@ from core.config import settings
 
 
 def _derive_fernet_key() -> bytes:
-    """Derive a 32-byte URL-safe base64 Fernet key from ENCRYPTION_MASTER_KEY or JWT_SECRET in dev."""
-    raw_secret = settings.ENCRYPTION_MASTER_KEY or f"dev-vault:{settings.JWT_SECRET}"
+    """Derive a 32-byte URL-safe base64 Fernet key from ENCRYPTION_MASTER_KEY (dev fallback to JWT_SECRET only outside prod)."""
+    raw_secret = settings.ENCRYPTION_MASTER_KEY
+    if not raw_secret:
+        if settings.ENVIRONMENT.lower() in ("production", "prod"):
+            raise RuntimeError("ENCRYPTION_MASTER_KEY must be configured in production.")
+        raw_secret = f"dev-vault:{settings.JWT_SECRET}"
     digest = hashlib.sha256(raw_secret.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
 
@@ -38,8 +42,8 @@ def decrypt_secret(ciphertext: str) -> str:
     f = Fernet(_derive_fernet_key())
     try:
         return f.decrypt(token).decode("utf-8")
-    except InvalidToken:
-        return ""
+    except InvalidToken as exc:
+        raise ValueError("Vault secret decryption failed: invalid master key or corrupted ciphertext.") from exc
 
 
 def encrypt_config_json(cfg: Dict[str, Any]) -> str:

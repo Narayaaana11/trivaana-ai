@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { Suspense, lazy, useState, useEffect } from 'react';
 import { AppSidebar, DashboardTab } from './AppSidebar';
 import { OverviewPanel } from './OverviewPanel';
 import { LeadManagementPanel } from './LeadManagementPanel';
@@ -15,12 +15,16 @@ import { AnalyticsPanel } from './AnalyticsPanel';
 import { FinancialLedgerPanel } from './FinancialLedgerPanel';
 import { SettingsPanel } from './SettingsPanel';
 import { DevelopersPanel } from './DevelopersPanel';
-import { SuperAdminPanel } from './SuperAdminPanel';
 import { AppointmentsPanel } from './AppointmentsPanel';
 import { WorkflowsPanel } from './WorkflowsPanel';
 import { SupportTicketsPanel } from './SupportTicketsPanel';
-import { AdminPortal } from '@/apps/admin/AdminPortal';
-import { StaffPortal } from '@/apps/staff/StaffPortal';
+
+const AdminPortal = lazy(() =>
+  import('@/apps/admin/AdminPortal').then((m) => ({ default: m.AdminPortal }))
+);
+const StaffPortal = lazy(() =>
+  import('@/apps/staff/StaffPortal').then((m) => ({ default: m.StaffPortal }))
+);
 import { LiveCallSimulatorModal } from './LiveCallSimulatorModal';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Tenant, AnalyticsStats, CallLog } from '@/types/trivaana';
@@ -198,6 +202,7 @@ export const MissionControl: React.FC<MissionControlProps> = ({
   const [stats, setStats] = useState<AnalyticsStats | null>(null);
   const [calls, setCalls] = useState<CallLog[]>([]);
   const [activeCalls, setActiveCalls] = useState<CallLog[]>([]);
+  const [phoneNumbers, setPhoneNumbers] = useState<any[]>([]);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [notifications, setNotifications] = useState<any[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -254,18 +259,20 @@ export const MissionControl: React.FC<MissionControlProps> = ({
 
   const refreshAllData = async () => {
     try {
-      const [tData, sData, cData, meData, notifData, actData] = await Promise.all([
+      const [tData, sData, cData, meData, notifData, actData, numData] = await Promise.all([
         trivaanaApi.getTenant(),
         trivaanaApi.getStats(),
         trivaanaApi.getCalls(),
         trivaanaApi.getMe().catch(() => null),
         trivaanaApi.getNotifications().catch(() => ({ notifications: [], unread_count: 0 })),
         trivaanaApi.getActiveCalls().catch(() => ({ active_calls: [] })),
+        trivaanaApi.getPhoneNumbers().catch(() => ({ phone_numbers: [] })),
       ]);
       setTenant(tData);
       setStats(sData);
       setCalls(cData.calls);
       setActiveCalls(actData.active_calls || []);
+      setPhoneNumbers(numData.phone_numbers || []);
       setUserProfile(meData?.user || meData);
       setNotifications(notifData.notifications || []);
       setUnreadCount(notifData.unread_count || 0);
@@ -297,11 +304,16 @@ export const MissionControl: React.FC<MissionControlProps> = ({
     { label: '2. Hire your first AI employee', done: (stats?.total_ai_employees || 0) > 0, tab: 'agents' as DashboardTab },
     { label: '3. Test call in AI sandbox', done: (stats?.total_calls_placed || 0) > 0, tab: 'agents' as DashboardTab },
     { label: '4. Fund wallet credits', done: (tenant?.wallet_balance || 0) > 0, tab: 'billing' as DashboardTab },
-    { label: '5. Connect a business number', done: true, tab: 'phone-numbers' as DashboardTab },
+    { label: '5. Connect a business number', done: phoneNumbers.length > 0, tab: 'phone-numbers' as DashboardTab },
     { label: '6. Launch calling campaign', done: (stats?.total_calls_placed || 0) > 0, tab: 'campaigns' as DashboardTab },
   ];
   const completedSteps = setupSteps.filter((s) => s.done).length;
   const initials = (userProfile?.full_name || 'TR').slice(0, 2).toUpperCase();
+  const isSuperAdminUser = Boolean(userProfile?.is_super_admin);
+  const hasStaffAccess = Boolean(
+    isSuperAdminUser ||
+      (typeof userProfile?.staff_role === 'string' && userProfile.staff_role.trim().length > 0)
+  );
 
   return (
     <div className="trivaana-workspace-shell flex h-screen bg-[#f6f6f8] text-[#0f0f14] overflow-hidden">
@@ -310,7 +322,8 @@ export const MissionControl: React.FC<MissionControlProps> = ({
         onSelectTab={setCurrentTab}
         tenant={tenant}
         stats={stats}
-        isSuperAdmin={Boolean(userProfile?.is_super_admin)}
+        isSuperAdmin={isSuperAdminUser}
+        hasStaffAccess={hasStaffAccess}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
         onExitDashboard={onExitDashboard}
         mobileOpen={mobileMenuOpen}
@@ -580,7 +593,7 @@ export const MissionControl: React.FC<MissionControlProps> = ({
           </header>
 
           {/* Main Scroll Container with Generous Bottom Padding for Floating Pills */}
-          <main className="trivaana-workspace-main flex-1 overflow-y-auto p-4 sm:p-6 bg-[#f6f6f8]/60 relative z-10">
+          <main className="trivaana-workspace-main flex-1 overflow-y-auto p-4 sm:p-6 bg-[#f6f6f8]/60 relative">
             <div className="max-w-7xl mx-auto pb-24">
               {currentTab === 'overview' && (
                 <OverviewPanel
@@ -670,20 +683,20 @@ export const MissionControl: React.FC<MissionControlProps> = ({
               )}
               {currentTab === 'support' && <SupportTicketsPanel />}
               {currentTab === 'staff-portal' && (
-                <StaffPortal
-                  hasStaffAccess={Boolean(userProfile?.is_super_admin)}
-                  onExitToCustomer={() => setCurrentTab('overview')}
-                />
-              )}
-              {currentTab === 'super-admin' && (
-                userProfile?.is_super_admin ? (
-                  <AdminPortal
-                    isSuperAdmin={true}
+                <Suspense fallback={<div className="p-8 text-xs text-slate-500">Loading Staff Portal...</div>}>
+                  <StaffPortal
+                    hasStaffAccess={hasStaffAccess}
                     onExitToCustomer={() => setCurrentTab('overview')}
                   />
-                ) : (
-                  <SuperAdminPanel />
-                )
+                </Suspense>
+              )}
+              {currentTab === 'super-admin' && (
+                <Suspense fallback={<div className="p-8 text-xs text-slate-500">Loading Super Admin...</div>}>
+                  <AdminPortal
+                    isSuperAdmin={isSuperAdminUser}
+                    onExitToCustomer={() => setCurrentTab('overview')}
+                  />
+                </Suspense>
               )}
             </div>
           </main>

@@ -12,7 +12,7 @@ import base64
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from core.config import settings
 from providers.voice_adapters import SUPPORTED_LANGUAGES, VoiceProviderPlanError, get_voice_provider
 
@@ -46,7 +46,7 @@ def list_supported_languages(db: sqlite3.Connection = Depends(get_db)):
     return {"languages": languages}
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("agents:read"))])
 def list_voices(
     language: Optional[str] = None,
     gender: Optional[str] = None,
@@ -95,7 +95,7 @@ def list_voices(
     }
 
 
-@router.post("/preview")
+@router.post("/preview", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def preview_voice(
     req: VoicePreviewRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -148,7 +148,7 @@ def preview_voice(
         raise HTTPException(status_code=502, detail=f"Voice preview failed: {str(e)}")
 
 
-@router.post("/{voice_profile_id}/test")
+@router.post("/{voice_profile_id}/test", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def test_voice_profile(
     voice_profile_id: str,
     tenant: dict = Depends(get_current_tenant),

@@ -34,9 +34,14 @@ jobs:
         env:
           DATABASE_URL: postgresql://trivaana:trivaana_ci_password@localhost:5432/trivaana_test
         run: alembic upgrade head
-      - name: Run Pytest suite
+      - name: Run Pytest suite (SQLite)
         working-directory: backend
         run: pytest -v tests
+      - name: Run Core Pytest suite (PostgreSQL)
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://trivaana:trivaana_ci_password@localhost:5432/trivaana_test
+        run: pytest -v tests/test_calls.py tests/test_phase1_security_and_billing.py
 
   frontend:
     runs-on: ubuntu-latest

@@ -5,8 +5,10 @@ LiveKit Real-Time Voice Engine, 4 Calling Modes, Knowledge Base RAG, AI Actions,
 Integrations, Compliance, Billing, and Super Admin.
 """
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
 import time
 
@@ -41,13 +43,32 @@ from routers.health import router as health_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail closed in production if JWT_SECRET or ENCRYPTION_MASTER_KEY is weak/default
+    settings.validate_production_security()
     init_db()
-    conn = get_connection()
-    try:
-        seed_demo_data(conn)
-    finally:
-        conn.close()
+    if settings.ALLOW_DEMO_SEEDING:
+        conn = get_connection()
+        try:
+            seed_demo_data(conn)
+        finally:
+            conn.close()
     yield
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach hardened HTTP security headers and prevent caching of auth responses."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), geolocation=(), microphone=(self)")
+        if settings.ENVIRONMENT.lower() in ("production", "prod"):
+            response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        if request.url.path.startswith("/api/auth"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 app = FastAPI(
@@ -57,6 +78,8 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+app.add_middleware(GZipMiddleware, minimum_size=500)
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,

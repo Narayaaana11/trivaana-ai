@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, require_roles
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from core.config import settings
 
 router = APIRouter(prefix="/api", tags=["Phone Numbers & Channels"])
@@ -45,7 +45,7 @@ class CreateChannelPoolRequest(BaseModel):
     channel_capacity: int = Field(5, ge=1, le=200)
 
 
-@router.get("/phone-numbers")
+@router.get("/phone-numbers", dependencies=[Depends(require_scope("phone_numbers:read"))])
 def list_phone_numbers(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -84,7 +84,7 @@ def list_phone_numbers(
     }
 
 
-@router.post("/phone-numbers")
+@router.post("/phone-numbers", dependencies=[Depends(require_scope("phone_numbers:write")), Depends(require_roles(["owner", "admin"]))])
 def request_or_connect_phone_number(
     req: ProvisionNumberRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -117,9 +117,14 @@ def request_or_connect_phone_number(
 
     num_id = f"num_{uuid.uuid4().hex[:8]}"
     now = datetime.now(timezone.utc).isoformat()
-    kyc_status = "verified" if provider_ready else "not_submitted"
-    num_status = "active" if provider_ready else "pending_kyc"
-    cfg_err = None if provider_ready else f"{provider.title()} credentials not configured; number registered in pending KYC state."
+    # Require explicit KYC/staff review or carrier ownership proof rather than self-approving arbitrary numbers
+    kyc_status = "pending_review" if provider_ready else "not_submitted"
+    num_status = "pending_kyc"
+    cfg_err = (
+        "Submitted for carrier ownership / KYC verification."
+        if provider_ready
+        else f"{provider.title()} credentials not configured; number registered in pending KYC state."
+    )
 
     cur = db.cursor()
     cur.execute(
@@ -157,7 +162,7 @@ def request_or_connect_phone_number(
     }
 
 
-@router.put("/phone-numbers/{number_id}")
+@router.put("/phone-numbers/{number_id}", dependencies=[Depends(require_scope("phone_numbers:write")), Depends(require_roles(["owner", "admin"]))])
 def update_phone_number(
     number_id: str,
     req: UpdateNumberRequest,
@@ -205,7 +210,7 @@ def update_phone_number(
     return {"status": "updated", "number_id": number_id}
 
 
-@router.post("/channels")
+@router.post("/channels", dependencies=[Depends(require_scope("phone_numbers:write")), Depends(require_roles(["owner", "admin"]))])
 def add_calling_channels(
     req: CreateChannelPoolRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -230,6 +235,8 @@ def add_calling_channels(
 def remove_calling_channel(
     channel_id: str,
     tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(require_roles(["owner", "admin"])),
+    _scope: dict = Depends(require_scope("phone_numbers:write")),
     db: sqlite3.Connection = Depends(get_db),
 ):
     cur = db.cursor()
@@ -240,7 +247,7 @@ def remove_calling_channel(
     return {"status": "deleted", "channel_id": channel_id}
 
 
-@router.post("/phone-numbers/verify")
+@router.post("/phone-numbers/verify", dependencies=[Depends(require_scope("phone_numbers:write")), Depends(require_roles(["owner", "admin"]))])
 def verify_carrier_numbers(
     provider: str = "exotel",
     tenant: dict = Depends(get_current_tenant),

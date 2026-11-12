@@ -13,8 +13,11 @@ temp_db_fd, temp_db_path = tempfile.mkstemp(suffix="_trivaana_test.db")
 os.close(temp_db_fd)
 os.environ["SQLITE_DB_PATH"] = temp_db_path
 
+import os
 from pathlib import Path
 from core.config import settings
+os.environ["ALLOW_DEMO_SEEDING"] = "true"
+settings.ALLOW_DEMO_SEEDING = True
 settings.DATABASE_PATH = Path(temp_db_path)
 settings.SQLITE_DB_PATH = Path(temp_db_path)
 

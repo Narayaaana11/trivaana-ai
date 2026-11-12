@@ -230,12 +230,16 @@ class ExotelTelephonyProvider(BaseTelephonyProvider):
     @staticmethod
     def generate_passthru_response(call_id: str, language: str = "te-IN") -> Dict[str, Any]:
         """Generate Exotel Passthru call control response for interactive call flow."""
+        base_url = settings.PUBLIC_BASE_URL.rstrip("/")
+        ws_base = base_url.replace("https://", "wss://").replace("http://", "ws://")
+        stream_token = ExotelTelephonyProvider.mint_stream_token(call_id)
         return {
             "select": "passthru",
             "call_id": call_id,
             "language": language,
             "status": "connected",
-            "action": "stream"
+            "action": "stream",
+            "stream_url": f"{ws_base}/api/calls/stream/{call_id}?provider=exotel&token={stream_token}",
         }
 
     def parse_webhook_event(self, headers: Dict[str, str], payload: Dict[str, Any]) -> CallStatusEvent:
@@ -265,3 +269,20 @@ class ExotelTelephonyProvider(BaseTelephonyProvider):
             recording_url=recording,
             raw_payload=payload
         )
+
+    def transfer_call(self, provider_call_id: str, to_phone: str) -> Dict[str, Any]:
+        if not self.is_configured:
+            return {
+                "supported": False,
+                "success": False,
+                "status": "not_configured",
+                "provider": "exotel",
+                "error": "Exotel credentials not configured.",
+            }
+        return {
+            "supported": False,
+            "success": False,
+            "status": "not_supported",
+            "provider": "exotel",
+            "error": "Exotel dynamic REST blind transfer requires configuring an Exotel Transfer Applet flow; transfer was not executed.",
+        }

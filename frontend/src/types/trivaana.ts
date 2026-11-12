@@ -63,6 +63,8 @@ export interface Lead {
   follow_up_at?: string;
   callback_at?: string;
   notes?: string;
+  lead_score?: number;
+  qualification_tier?: 'hot' | 'warm' | 'cold' | 'dnc';
   created_at: string;
 }
 
@@ -88,6 +90,14 @@ export interface CallLog {
   summary?: string;
   sentiment?: string;
   extracted_data?: Record<string, any>;
+  qa_extraction?: {
+    qualification_score: number;
+    sentiment?: string;
+    summary?: string;
+    next_action?: string;
+    objections?: string[];
+    competitors_mentioned?: string[];
+  } | null;
   transcript: string;
   transcript_messages?: Array<{ id: string; speaker: string; message: string; timestamp_ms: number }>;
   actions_performed?: Array<{ id: string; action_type: string; action_name: string; status: string; arguments: any; result: any }>;

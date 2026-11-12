@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, CheckCircle2, ClipboardCheck, Headphones, ShieldAlert } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, ClipboardCheck, Eye, FileCheck2, Headphones, ShieldAlert } from 'lucide-react';
 import { platformService } from '@/services/platformService';
 
 interface StaffPortalProps {
@@ -11,6 +11,10 @@ interface StaffPortalProps {
 export const StaffPortal: React.FC<StaffPortalProps> = ({ hasStaffAccess, onExitToCustomer }) => {
   const qc = useQueryClient();
   const [resolutionMap, setResolutionMap] = useState<Record<string, string>>({});
+  const [statusMap, setStatusMap] = useState<Record<string, string>>({});
+  const [assigneeMap, setAssigneeMap] = useState<Record<string, string>>({});
+  const [tenantSummary, setTenantSummary] = useState<any>(null);
+  const [staffError, setStaffError] = useState<string | null>(null);
 
   const { data: ticketsData } = useQuery({
     queryKey: ['staff-tickets'],
@@ -24,16 +28,49 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({ hasStaffAccess, onExit
     enabled: hasStaffAccess,
   });
 
+  const { data: dltData } = useQuery({
+    queryKey: ['staff-dlt-queue'],
+    queryFn: () => platformService.staffListDltQueue(),
+    enabled: hasStaffAccess,
+  });
+
   const updateTicketMut = useMutation({
-    mutationFn: ({ id, status, notes }: { id: string; status: string; notes?: string }) =>
-      platformService.staffUpdateTicket(id, { status, resolution_notes: notes }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['staff-tickets'] }),
+    mutationFn: ({ id, status, assigned_staff_id, notes }: { id: string; status?: string; assigned_staff_id?: string; notes?: string }) =>
+      platformService.staffUpdateTicket(id, { status, assigned_staff_id, resolution_notes: notes }),
+    onSuccess: () => {
+      setStaffError(null);
+      qc.invalidateQueries({ queryKey: ['staff-tickets'] });
+    },
+    onError: (err: any) => setStaffError(err?.message || 'Failed to update ticket'),
   });
 
   const reviewKycMut = useMutation({
     mutationFn: ({ id, kyc_status }: { id: string; kyc_status: string }) =>
       platformService.staffReviewKyc(id, { kyc_status }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['staff-kyc-queue'] }),
+    onSuccess: () => {
+      setStaffError(null);
+      qc.invalidateQueries({ queryKey: ['staff-kyc-queue'] });
+    },
+    onError: (err: any) => setStaffError(err?.message || 'Failed to review KYC'),
+  });
+
+  const reviewDltMut = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      platformService.staffReviewDlt(id, { status }),
+    onSuccess: () => {
+      setStaffError(null);
+      qc.invalidateQueries({ queryKey: ['staff-dlt-queue'] });
+    },
+    onError: (err: any) => setStaffError(err?.message || 'Failed to review DLT registration'),
+  });
+
+  const inspectTenantMut = useMutation({
+    mutationFn: (tenantId: string) => platformService.staffGetTenantSummary(tenantId),
+    onSuccess: (data) => {
+      setStaffError(null);
+      setTenantSummary(data);
+    },
+    onError: (err: any) => setStaffError(err?.message || 'Failed to load tenant summary'),
   });
 
   if (!hasStaffAccess) {
@@ -74,6 +111,12 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({ hasStaffAccess, onExit
           </button>
         </div>
 
+        {staffError && (
+          <div className="p-3.5 rounded-2xl border border-rose-200 bg-rose-50 text-xs text-rose-800 font-semibold">
+            {staffError}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-xs">
           <div className="bg-white rounded-3xl p-6 border border-slate-200 space-y-3">
             <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
@@ -89,6 +132,31 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({ hasStaffAccess, onExit
                     <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 font-bold text-[10px]">{t.status}</span>
                   </div>
                   <p className="text-slate-600">{t.description}</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <select
+                      value={statusMap[t.id] ?? t.status}
+                      onChange={(e) => setStatusMap((m) => ({ ...m, [t.id]: e.target.value }))}
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white"
+                    >
+                      <option value="open">open</option>
+                      <option value="in_progress">in_progress</option>
+                      <option value="resolved">resolved</option>
+                      <option value="closed">closed</option>
+                    </select>
+                    <input
+                      value={assigneeMap[t.id] ?? t.assigned_staff_id ?? ''}
+                      onChange={(e) => setAssigneeMap((m) => ({ ...m, [t.id]: e.target.value }))}
+                      placeholder="Assign staff ID..."
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => inspectTenantMut.mutate(t.tenant_id)}
+                      className="px-2.5 py-1.5 rounded-xl border border-slate-200 bg-white font-bold text-slate-700 hover:bg-slate-100 cursor-pointer inline-flex items-center justify-center gap-1"
+                    >
+                      <Eye className="w-3.5 h-3.5" /> Inspect Tenant
+                    </button>
+                  </div>
                   <div className="flex gap-2">
                     <input
                       value={resolutionMap[t.id] || ''}
@@ -98,7 +166,28 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({ hasStaffAccess, onExit
                     />
                     <button
                       type="button"
-                      onClick={() => updateTicketMut.mutate({ id: t.id, status: 'resolved', notes: resolutionMap[t.id] })}
+                      onClick={() =>
+                        updateTicketMut.mutate({
+                          id: t.id,
+                          status: statusMap[t.id] ?? t.status,
+                          assigned_staff_id: assigneeMap[t.id] ?? t.assigned_staff_id,
+                          notes: resolutionMap[t.id],
+                        })
+                      }
+                      className="px-3 py-1.5 rounded-xl bg-slate-900 text-white font-bold cursor-pointer"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        updateTicketMut.mutate({
+                          id: t.id,
+                          status: 'resolved',
+                          assigned_staff_id: assigneeMap[t.id] ?? t.assigned_staff_id,
+                          notes: resolutionMap[t.id],
+                        })
+                      }
                       className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold cursor-pointer inline-flex items-center gap-1"
                     >
                       <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
@@ -140,6 +229,64 @@ export const StaffPortal: React.FC<StaffPortalProps> = ({ hasStaffAccess, onExit
                   </div>
                 </div>
               ))
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 text-xs">
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <FileCheck2 className="w-4 h-4 text-indigo-600" /> DLT Entity &amp; Template Review Queue
+            </div>
+            {(dltData?.dlt_items || []).length === 0 ? (
+              <div className="py-8 text-center text-slate-400">No DLT registrations in review queue.</div>
+            ) : (
+              (dltData?.dlt_items || []).map((item: any) => (
+                <div key={item.id} className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-slate-900">{item.header_id} — {item.entity_name}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {item.tenant_name} · PE: {item.pe_id} · Status: {item.status}
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => reviewDltMut.mutate({ id: item.id, status: 'approved' })}
+                      className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white font-bold cursor-pointer"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => reviewDltMut.mutate({ id: item.id, status: 'rejected' })}
+                      className="px-3 py-1.5 rounded-xl bg-rose-600 text-white font-bold cursor-pointer"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="bg-white rounded-3xl p-6 border border-slate-200 space-y-3">
+            <div className="flex items-center gap-2 text-sm font-bold text-slate-900">
+              <Eye className="w-4 h-4 text-slate-700" /> Audited Read-Only Tenant Summary
+            </div>
+            {!tenantSummary ? (
+              <div className="py-8 text-center text-slate-400">
+                Click &quot;Inspect Tenant&quot; on any ticket to view audited workspace metrics without exposing private transcripts.
+              </div>
+            ) : (
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 space-y-1.5">
+                <div className="font-bold text-slate-900 text-sm">{tenantSummary.tenant?.name} ({tenantSummary.tenant?.plan})</div>
+                <div className="text-slate-600">Status: {tenantSummary.tenant?.status} · Concurrency: {tenantSummary.tenant?.concurrency_limit}</div>
+                <div className="text-slate-600">Wallet: ₹{((tenantSummary.tenant?.wallet_balance_paise || 0) / 100).toFixed(2)}</div>
+                <div className="font-semibold text-slate-900">
+                  Agents: {tenantSummary.agent_count} · Total Calls: {tenantSummary.call_stats?.calls || 0}
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -6,20 +6,13 @@ Persists @xyflow/react workflow graphs and dispatches durable executions.
 from datetime import datetime, timezone
 import json
 import sqlite3
-import sys
-from pathlib import Path
 import uuid
 from typing import Any, Dict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from core.dependencies import get_current_tenant, get_current_user, get_db
-
-ROOT_DIR = Path(__file__).resolve().parents[2]
-if str(ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(ROOT_DIR))
-
-from workers.workflows.temporal_worker import trigger_workflow_execution  # noqa: E402
+from core.dependencies import get_current_tenant, get_current_user, get_db, require_roles, require_scope
+from services.workflow_engine import trigger_workflow_execution
 
 router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
 
@@ -36,7 +29,7 @@ class ExecuteWorkflowRequest(BaseModel):
     context: Dict[str, Any] = Field(default_factory=dict)
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("workflows:read"))])
 def list_workflows(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -52,7 +45,7 @@ def list_workflows(
     return {"workflows": items, "count": len(items)}
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_scope("workflows:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_workflow(
     req: CreateWorkflowRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -73,7 +66,7 @@ def create_workflow(
     return {"status": "created", "workflow_id": wf_id}
 
 
-@router.put("/{workflow_id}")
+@router.put("/{workflow_id}", dependencies=[Depends(require_scope("workflows:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def update_workflow(
     workflow_id: str,
     req: CreateWorkflowRequest,
@@ -95,7 +88,7 @@ def update_workflow(
     return {"status": "updated", "workflow_id": workflow_id}
 
 
-@router.post("/{workflow_id}/execute")
+@router.post("/{workflow_id}/execute", dependencies=[Depends(require_scope("workflows:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def execute_workflow(
     workflow_id: str,
     req: ExecuteWorkflowRequest,
@@ -114,7 +107,7 @@ def execute_workflow(
         raise HTTPException(status_code=404, detail="Workflow not found")
 
 
-@router.get("/{workflow_id}/executions")
+@router.get("/{workflow_id}/executions", dependencies=[Depends(require_scope("workflows:read"))])
 def list_workflow_executions(
     workflow_id: str,
     tenant: dict = Depends(get_current_tenant),

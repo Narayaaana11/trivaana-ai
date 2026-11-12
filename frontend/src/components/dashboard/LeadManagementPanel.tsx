@@ -102,15 +102,18 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
     }
   };
 
-  const handlePasteImport = async (e: React.FormEvent) => {
+  const handlePasteImport = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const consentConfirmed = Boolean(
+      (e.currentTarget.elements.namedItem('consent_confirmed') as HTMLInputElement | null)?.checked
+    );
     const lines = pasteText.split('\n').map((l) => l.trim()).filter(Boolean);
     const contacts = lines.map((line) => {
       const parts = line.split(',').map((p) => p.trim());
       return parts.length >= 2 ? { name: parts[0], phone: parts[1], city: parts[2] || 'Hyderabad' } : { name: 'Contact', phone: parts[0] };
     });
     try {
-      const res = await trivaanaApi.bulkPasteLeads(contacts);
+      const res = await trivaanaApi.bulkPasteLeads(contacts, undefined, consentConfirmed);
       setShowPasteModal(false);
       setPasteText('');
       setFeedback({ type: 'success', message: `Imported ${res.imported_count} contacts (${res.rejected_count} rejected/duplicates).` });
@@ -148,9 +151,12 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
     }
   };
 
-  const confirmCsvUpload = async (e: React.FormEvent) => {
+  const confirmCsvUpload = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!csvPendingFile) return;
+    const consentConfirmed = Boolean(
+      (e.currentTarget.elements.namedItem('consent_confirmed') as HTMLInputElement | null)?.checked
+    );
     setIsUploadingCsv(true);
     setFeedback(null);
     try {
@@ -158,7 +164,7 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
       Object.entries(csvMapping).forEach(([target, source]) => {
         if (source) cleanMap[target] = source;
       });
-      const res = await trivaanaApi.uploadLeadsCsv(csvPendingFile, cleanMap);
+      const res = await trivaanaApi.uploadLeadsCsv(csvPendingFile, cleanMap, consentConfirmed);
       const imported = res.imported_count ?? 0;
       const rejected = res.rejected_count ?? 0;
       setFeedback({
@@ -177,8 +183,14 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
   const openLeadDrawer = async (leadId: string) => {
     setDetailLoading(true);
     try {
-      const det = await trivaanaApi.getLeadDetail(leadId);
-      setSelectedLeadDetail(det);
+      const [det, tl] = await Promise.all([
+        trivaanaApi.getLeadDetail(leadId),
+        trivaanaApi.getLeadTimeline(leadId).catch(() => null),
+      ]);
+      setSelectedLeadDetail({
+        ...det,
+        timeline: tl?.timeline || det?.timeline || [],
+      });
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message });
     } finally {
@@ -432,7 +444,22 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
                 filteredLeads.map((lead) => (
                   <tr key={lead.id} onClick={() => openLeadDrawer(lead.id)} className="hover:bg-slate-50/70 cursor-pointer">
                     <td className="py-3 px-2">
-                      <div className="font-bold text-slate-900">{lead.name}</div>
+                      <div className="font-bold text-slate-900 flex items-center gap-1.5">
+                        <span>{lead.name}</span>
+                        {typeof lead.lead_score === 'number' && (
+                          <span
+                            className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold tabular-nums ${
+                              lead.qualification_tier === 'hot'
+                                ? 'bg-orange-100 text-orange-800'
+                                : lead.qualification_tier === 'warm'
+                                ? 'bg-amber-100 text-amber-800'
+                                : 'bg-slate-100 text-slate-600'
+                            }`}
+                          >
+                            {lead.lead_score}/100
+                          </span>
+                        )}
+                      </div>
                       <div className="text-[11px] text-slate-500">{lead.source}</div>
                     </td>
                     <td className="py-3 px-2 font-mono text-slate-800">{lead.phone}</td>
@@ -526,6 +553,10 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
               placeholder={"Rahul,+919848011111,Hyderabad\nPriya,+919848022222,Bengaluru"}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
             />
+            <label className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 cursor-pointer">
+              <input type="checkbox" name="consent_confirmed" className="mt-0.5" />
+              <span>I confirm these contacts gave prior opt-in consent for automated outreach (TRAI compliance).</span>
+            </label>
             <button type="submit" className="w-full py-2.5 rounded-xl bg-slate-900 text-white font-bold cursor-pointer">Import Pasted Contacts</button>
           </form>
         </div>
@@ -579,6 +610,10 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
                 </table>
               </div>
             )}
+            <label className="flex items-start gap-2 p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-[11px] text-amber-900 cursor-pointer">
+              <input type="checkbox" name="consent_confirmed" className="mt-0.5" />
+              <span>I confirm these CSV contacts gave prior opt-in consent for outreach; unchecked rows remain pending consent verification.</span>
+            </label>
             <div className="flex gap-2">
               <button type="button" onClick={() => setCsvPendingFile(null)} className="flex-1 py-2.5 rounded-xl bg-slate-100 text-slate-700 font-bold cursor-pointer">
                 Cancel
@@ -646,6 +681,25 @@ export const LeadManagementPanel: React.FC<LeadManagementPanelProps> = ({
                           <span className="text-slate-500">{c.duration_seconds ?? c.duration_sec ?? 0}s</span>
                         </div>
                         <div className="text-[11px] text-slate-500">{c.summary || 'No summary'}</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <div className="font-bold text-slate-700 uppercase text-[11px]">
+                    Unified Activity Timeline ({(selectedLeadDetail?.timeline || []).length})
+                  </div>
+                  {(selectedLeadDetail?.timeline || []).length === 0 ? (
+                    <div className="p-4 rounded-xl bg-slate-50 text-slate-400 text-center">No timeline events recorded yet.</div>
+                  ) : (
+                    (selectedLeadDetail?.timeline || []).map((ev: any) => (
+                      <div key={ev.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-0.5">
+                        <div className="flex justify-between font-bold text-slate-800">
+                          <span>{ev.title}</span>
+                          <span className="text-[10px] uppercase text-orange-700">{ev.status}</span>
+                        </div>
+                        {ev.detail && <div className="text-[11px] text-slate-600">{ev.detail}</div>}
                       </div>
                     ))
                   )}

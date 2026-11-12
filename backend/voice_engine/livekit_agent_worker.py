@@ -6,6 +6,7 @@ Run in production when LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and OPE
 import os
 import json
 import logging
+from typing import Any, Dict, Optional
 
 logger = logging.getLogger("trivaana.livekit.worker")
 
@@ -65,8 +66,73 @@ def build_agent_context_instructions(metadata: dict) -> str:
     return base_instructions
 
 
+def finalize_call_session(
+    conn,
+    call_id: str,
+    tenant_id: str,
+    duration_seconds: int = 0,
+    transcript_text: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Persist completed LiveKit session status, transcript, and idempotent usage billing."""
+    from datetime import datetime, timezone
+    from services.billing_service import BillingService, InsufficientBalanceError
+
+    now = datetime.now(timezone.utc).isoformat()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM calls WHERE id = ? AND tenant_id = ?", (call_id, tenant_id))
+    call = cur.fetchone()
+    if not call:
+        return {"updated": False, "reason": "call_not_found"}
+
+    dur = max(0, int(duration_seconds or 0))
+    billable_seconds = 0
+    cost_paise = 0
+    if dur > 0 and not call["is_sandbox"]:
+        agent_rate = BillingService.get_agent_call_rate(conn, call["agent_id"])
+        cost_info = BillingService.calculate_call_cost(
+            duration_seconds=dur,
+            rate_paise_per_min=agent_rate["rate_paise_per_min"],
+            connected=True,
+            increment_seconds=agent_rate["increment_seconds"],
+        )
+        billable_seconds = cost_info["billable_seconds"]
+        cost_paise = cost_info["cost_paise"]
+        if cost_paise > 0 and (call["cost_paise"] or 0) == 0:
+            try:
+                BillingService.debit_wallet(
+                    conn=conn,
+                    tenant_id=tenant_id,
+                    amount_paise=cost_paise,
+                    description=f"LiveKit Call usage: {call['contact_name']} ({call['phone']}) - {dur}s",
+                    idempotency_key=f"call_debit_{call_id}",
+                    invoice_id=f"INV-CALL-{call_id[-6:].upper()}",
+                    commit=False,
+                )
+            except InsufficientBalanceError:
+                pass
+
+    cur.execute(
+        """
+        UPDATE calls
+        SET status = 'completed',
+            duration_seconds = CASE WHEN COALESCE(duration_seconds, 0) < ? THEN ? ELSE duration_seconds END,
+            billable_duration_seconds = CASE WHEN COALESCE(billable_duration_seconds, 0) < ? THEN ? ELSE billable_duration_seconds END,
+            cost_paise = CASE WHEN COALESCE(cost_paise, 0) < ? THEN ? ELSE cost_paise END,
+            transcript = COALESCE(?, transcript),
+            ended_at = ?
+        WHERE id = ? AND tenant_id = ?
+        """,
+        (dur, dur, billable_seconds, billable_seconds, cost_paise, cost_paise, transcript_text, now, call_id, tenant_id),
+    )
+    conn.commit()
+    return {"updated": True, "call_id": call_id, "billable_seconds": billable_seconds, "cost_paise": cost_paise}
+
+
 def run_worker():
     """Start the LiveKit Voice Agent worker process."""
+    import sys
+    import time
+
     caps = get_worker_capabilities()
     if not caps["sdk_installed"]:
         raise RuntimeError(
@@ -81,6 +147,7 @@ def run_worker():
     from livekit.plugins import openai as lk_openai  # type: ignore
 
     async def entrypoint(ctx: JobContext):
+        started_at = time.monotonic()
         await ctx.connect(auto_subscribe=AutoSubscribe.AUDIO_ONLY)
         metadata = {}
         if ctx.room.metadata:
@@ -96,6 +163,17 @@ def run_worker():
 
         stt_engine = lk_openai.STT()
         tts_engine = lk_openai.TTS(voice=metadata.get("voice_id", "alloy"))
+        llm_engine = None
+
+        if os.environ.get("GEMINI_API_KEY"):
+            try:
+                from livekit.plugins import google as lk_google  # type: ignore
+                llm_engine = lk_google.LLM(model=os.environ.get("GEMINI_MODEL", "gemini-2.5-flash"))
+            except ImportError:
+                logger.warning("livekit-plugins-google not installed; falling back to OpenAI LLM.")
+
+        if llm_engine is None:
+            llm_engine = lk_openai.LLM(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"))
 
         if provider == "sarvam" and os.environ.get("SARVAM_API_KEY"):
             try:
@@ -107,18 +185,9 @@ def run_worker():
 
         session = AgentSession(
             stt=stt_engine,
-            llm=lk_openai.LLM(model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini")),
+            llm=llm_engine,
             tts=tts_engine,
         )
-        await session.start(
-            room=ctx.room,
-            agent=Agent(instructions=instructions),
-        )
-        greeting = metadata.get("greeting_message")
-        if greeting:
-            await session.generate_reply(instructions=f"Say this greeting warmly: {greeting}")
-
-        # Persist session start event when call_id is present in room metadata
         call_id = metadata.get("call_id")
         tenant_id = metadata.get("tenant_id")
         if call_id and tenant_id:
@@ -136,6 +205,28 @@ def run_worker():
             except Exception as exc:
                 logger.warning("Failed to update call status for %s: %s", call_id, exc)
 
+        try:
+            await session.start(
+                room=ctx.room,
+                agent=Agent(instructions=instructions),
+            )
+            greeting = metadata.get("greeting_message")
+            if greeting:
+                await session.generate_reply(instructions=f"Say this greeting warmly: {greeting}")
+        finally:
+            if call_id and tenant_id:
+                try:
+                    from database import get_connection
+                    conn = get_connection()
+                    try:
+                        finalize_call_session(conn, call_id, tenant_id, duration_seconds=int(time.monotonic() - started_at))
+                    finally:
+                        conn.close()
+                except Exception as exc:
+                    logger.warning("Failed to finalize call session for %s: %s", call_id, exc)
+
+    if len(sys.argv) == 1:
+        sys.argv.append("start")
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
 
 

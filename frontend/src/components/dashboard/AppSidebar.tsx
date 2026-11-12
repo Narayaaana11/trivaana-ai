@@ -60,6 +60,7 @@ interface AppSidebarProps {
   tenant: Tenant | null;
   stats: AnalyticsStats | null;
   isSuperAdmin?: boolean;
+  hasStaffAccess?: boolean;
   onOpenSimulator: () => void;
   onExitDashboard: () => void;
   mobileOpen?: boolean;
@@ -77,6 +78,7 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
   onSelectTab,
   tenant,
   isSuperAdmin = false,
+  hasStaffAccess = false,
   onOpenSimulator,
   onExitDashboard,
   mobileOpen = false,
@@ -127,13 +129,16 @@ export const AppSidebar: React.FC<AppSidebarProps> = ({
     },
   ];
 
-  if (isSuperAdmin) {
+  if (isSuperAdmin || hasStaffAccess) {
+    const platformItems: { id: DashboardTab; label: string; icon: any; badge?: string }[] = [
+      { id: 'staff-portal', label: 'Staff Portal', icon: Headphones },
+    ];
+    if (isSuperAdmin) {
+      platformItems.push({ id: 'super-admin', label: 'Super Admin', icon: ShieldAlert, badge: 'Admin' });
+    }
     GROUPS.push({
       title: 'PLATFORM',
-      items: [
-        { id: 'staff-portal', label: 'Staff Portal', icon: Headphones },
-        { id: 'super-admin', label: 'Super Admin', icon: ShieldAlert, badge: 'Admin' },
-      ],
+      items: platformItems,
     });
   }
 

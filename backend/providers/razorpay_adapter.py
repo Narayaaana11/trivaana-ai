@@ -51,6 +51,8 @@ class RazorpayPaymentProvider(BasePaymentProvider):
         receipt_id = receipt or f"rcpt_{uuid.uuid4().hex[:8]}"
 
         if not self.is_configured:
+            if settings.ENVIRONMENT.lower() in ("production", "prod"):
+                raise RuntimeError("Razorpay is not configured in production environment.")
             # Deterministic Dev Sandbox Order (Explicitly marked)
             order_id = f"order_sandbox_{uuid.uuid4().hex[:10]}"
             return {
@@ -88,6 +90,8 @@ class RazorpayPaymentProvider(BasePaymentProvider):
 
     def verify_payment_signature(self, order_id: str, payment_id: str, signature: str) -> bool:
         if not self.is_configured:
+            if settings.ENVIRONMENT.lower() in ("production", "prod"):
+                return False
             # In sandbox mode without live keys, verify sandbox prefix
             return order_id.startswith("order_sandbox_") and payment_id.startswith("pay_sandbox_")
 
@@ -125,7 +129,7 @@ class RazorpayPaymentProvider(BasePaymentProvider):
                 "is_sandbox": True
             }
         endpoint = f"{self.base_url}/payments/{payment_id}"
-        resp = requests.get(
+        resp = httpx.get(
             endpoint,
             auth=(self.key_id, self.key_secret),
             timeout=10.0

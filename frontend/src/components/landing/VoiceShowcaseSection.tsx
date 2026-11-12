@@ -20,7 +20,7 @@ const VOICE_PROFILES = [
     name: 'Aravind · Real Estate',
     lang: 'te-IN',
     languageLabel: 'Telugu (తెలుగు)',
-    tier: 'Standard · ₹5.00/min',
+    tier: 'Standard · ₹6.50/min',
     provider: 'Sarvam Bulbul v3',
     sample: 'నమస్కారం అండి! గేటెడ్ విల్లాస్ బ్రోచర్ గురించి కాల్ చేస్తున్నాను. ఈ శనివారం విజిట్ బుక్ చేద్దామా?',
     tone: 'Warm · Confident · Conversational',
@@ -30,7 +30,7 @@ const VOICE_PROFILES = [
     name: 'Priya · Healthcare Desk',
     lang: 'hi-IN',
     languageLabel: 'Hindi (हिन्दी)',
-    tier: 'Premium · ₹6.80/min',
+    tier: 'Premium · ₹8.50/min',
     provider: 'ElevenLabs Flash v2.5',
     sample: 'नमस्ते! अपोलो डेंटल क्लिनिक से प्रिया बोल रही हूँ। कल सुबह 10:30 का अपॉइंटमेंट कन्फर्म कर दूँ?',
     tone: 'Empathetic · Clear · Polite',
@@ -40,7 +40,7 @@ const VOICE_PROFILES = [
     name: 'Rohan · EdTech Counselor',
     lang: 'en-IN',
     languageLabel: 'Indian English',
-    tier: 'Standard · ₹5.00/min',
+    tier: 'Standard · ₹6.50/min',
     provider: 'Sarvam Neural',
     sample: 'Hi there! Calling about your daughter’s NEET 2027 mock test scholarship slot this Sunday at 10 AM.',
     tone: 'Crisp · Energetic · Natural Indian Cadence',
@@ -50,7 +50,7 @@ const VOICE_PROFILES = [
     name: 'Kavya · Financial Advisory',
     lang: 'ta-IN',
     languageLabel: 'Tamil (தமிழ்)',
-    tier: 'Premium · ₹6.80/min',
+    tier: 'Premium · ₹8.50/min',
     provider: 'Sarvam / ElevenLabs',
     sample: 'வணக்கம்! உங்கள் வணிக கடன் தகுதி சரிபார்ப்பை 2 நிமிடங்களில் முடிக்கலாமா?',
     tone: 'Trustworthy · Measured · Multilingual',
@@ -115,7 +115,7 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
               <p className="text-[11px] text-[#6e6e7e] mt-1">Handles natural barge-in &amp; interruptions</p>
             </div>
             <div>
-              <div className="font-display text-3xl font-extrabold text-[#ff5500] tabular-nums">₹5.00/m</div>
+              <div className="font-display text-3xl font-extrabold text-[#ff5500] tabular-nums">₹6.50/m</div>
               <div className="text-xs font-bold text-[#0f0f14] mt-1">Standard vs Premium</div>
               <p className="text-[11px] text-[#6e6e7e] mt-1">Upgrade any employee per-minute anytime</p>
             </div>

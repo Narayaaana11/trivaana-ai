@@ -57,8 +57,12 @@ class PlivoTelephonyProvider(BaseTelephonyProvider):
 
         call_id = (extra_data or {}).get("call_id", "")
         base_url = settings.PUBLIC_BASE_URL.rstrip("/")
-        answer_url = f"{base_url}/api/calls/plivo-xml/{call_id}" if call_id else f"{base_url}/api/calls/plivo-xml/default"
         cb_tok = self.build_callback_token(call_id) if call_id else ""
+        answer_url = (
+            f"{base_url}/api/calls/plivo-xml/{call_id}?plivo_auth={cb_tok}"
+            if call_id
+            else f"{base_url}/api/calls/plivo-xml/default"
+        )
         status_url = webhook_url or (
             f"{base_url}/api/calls/callback/{call_id}?plivo_auth={cb_tok}" if call_id else ""
         )
@@ -141,34 +145,32 @@ class PlivoTelephonyProvider(BaseTelephonyProvider):
             return {"verified": False, "numbers": [], "error": str(exc)}
 
     def verify_request(self, headers: Dict[str, str], params: Dict[str, Any], url: Optional[str] = None) -> bool:
-        if not self.auth_token:
-            return False
+        # 1. Plivo Signature V2 / V3 check (HMAC-SHA256 base64, requires auth_token)
+        if self.auth_token:
+            lower_headers = {k.lower(): v for k, v in headers.items()}
+            sig_v2 = lower_headers.get("x-plivo-signature-v2")
+            nonce_v2 = lower_headers.get("x-plivo-signature-v2-nonce")
+            if sig_v2 and nonce_v2 and url:
+                base = url.split("?")[0] + nonce_v2
+                expected_v2 = base64.b64encode(
+                    hmac.new(self.auth_token.encode("utf-8"), base.encode("utf-8"), hashlib.sha256).digest()
+                ).decode("utf-8")
+                if hmac.compare_digest(expected_v2, sig_v2):
+                    return True
 
-        # 1. Plivo Signature V2 / V3 check (HMAC-SHA256 base64)
-        lower_headers = {k.lower(): v for k, v in headers.items()}
-        sig_v2 = lower_headers.get("x-plivo-signature-v2")
-        nonce_v2 = lower_headers.get("x-plivo-signature-v2-nonce")
-        if sig_v2 and nonce_v2 and url:
-            base = url.split("?")[0] + nonce_v2
-            expected_v2 = base64.b64encode(
-                hmac.new(self.auth_token.encode("utf-8"), base.encode("utf-8"), hashlib.sha256).digest()
-            ).decode("utf-8")
-            if hmac.compare_digest(expected_v2, sig_v2):
-                return True
+            sig_v3 = lower_headers.get("x-plivo-signature-v3")
+            nonce_v3 = lower_headers.get("x-plivo-signature-v3-nonce")
+            if sig_v3 and nonce_v3 and url:
+                filtered = {k: v for k, v in params.items() if k not in ("_call_id", "plivo_auth")}
+                sorted_kv = "".join(f"{k}{filtered[k]}" for k in sorted(filtered.keys()))
+                payload_str = f"{url.split('?')[0]}{sorted_kv}.{nonce_v3}"
+                expected_v3 = base64.b64encode(
+                    hmac.new(self.auth_token.encode("utf-8"), payload_str.encode("utf-8"), hashlib.sha256).digest()
+                ).decode("utf-8")
+                if hmac.compare_digest(expected_v3, sig_v3):
+                    return True
 
-        sig_v3 = lower_headers.get("x-plivo-signature-v3")
-        nonce_v3 = lower_headers.get("x-plivo-signature-v3-nonce")
-        if sig_v3 and nonce_v3 and url:
-            filtered = {k: v for k, v in params.items() if k not in ("_call_id", "plivo_auth")}
-            sorted_kv = "".join(f"{k}{filtered[k]}" for k in sorted(filtered.keys()))
-            payload_str = f"{url.split('?')[0]}{sorted_kv}.{nonce_v3}"
-            expected_v3 = base64.b64encode(
-                hmac.new(self.auth_token.encode("utf-8"), payload_str.encode("utf-8"), hashlib.sha256).digest()
-            ).decode("utf-8")
-            if hmac.compare_digest(expected_v3, sig_v3):
-                return True
-
-        # 2. Capability HMAC token fallback minted on callback URL
+        # 2. Capability HMAC token minted on callback/answer XML URL
         plivo_auth = params.get("plivo_auth")
         call_id = params.get("_call_id") or ""
         if plivo_auth and call_id:
@@ -218,4 +220,55 @@ class PlivoTelephonyProvider(BaseTelephonyProvider):
             recording_url=payload.get("RecordUrl") or payload.get("RecordingUrl"),
             raw_payload=payload,
         )
+
+    def transfer_call(self, provider_call_id: str, to_phone: str) -> Dict[str, Any]:
+        if not self.is_configured:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "not_configured",
+                "provider": "plivo",
+                "error": "Plivo credentials not configured for live call transfer.",
+            }
+        if not provider_call_id:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "plivo",
+                "error": "Missing Plivo CallUUID for transfer.",
+            }
+        base_url = settings.PUBLIC_BASE_URL.rstrip("/")
+        aleg_url = f"{base_url}/api/calls/plivo-xml/{provider_call_id}"
+        try:
+            resp = requests.post(
+                f"{self.base_url}/Call/{provider_call_id}/",
+                auth=(self.auth_id, self.auth_token),
+                json={"legs": "aleg", "aleg_url": aleg_url, "aleg_method": "POST"},
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 202):
+                return {
+                    "supported": True,
+                    "success": True,
+                    "status": "executed",
+                    "provider": "plivo",
+                    "provider_call_id": provider_call_id,
+                    "transfer_to": to_phone,
+                }
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "plivo",
+                "error": f"Plivo transfer failed ({resp.status_code}): {resp.text[:300]}",
+            }
+        except Exception as exc:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "plivo",
+                "error": str(exc),
+            }
 

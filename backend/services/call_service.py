@@ -48,13 +48,21 @@ class CallService:
         if len(norm_phone) < 10:
             raise ValueError(f"Invalid recipient phone number: '{phone}'")
 
-        # 1. Check wallet balance (minimum 1 minute required for non-sandbox)
-        cur.execute("SELECT wallet_balance_paise FROM tenants WHERE id = ?", (tenant_id,))
+        # 1. Enforce global kill switch, active tenant, and minimum wallet balance
+        from services.compliance_service import ComplianceService
+        pause = ComplianceService.get_emergency_pause(conn)
+        if pause["paused"]:
+            raise ValueError(f"Outbound calling paused by platform administrator: {pause['reason']}")
+
+        cur.execute("SELECT wallet_balance_paise, status FROM tenants WHERE id = ?", (tenant_id,))
         tenant = cur.fetchone()
         if not tenant:
             raise ValueError(f"Tenant '{tenant_id}' not found")
+        if (tenant["status"] or "active") != "active":
+            raise ValueError(f"Tenant '{tenant_id}' is suspended or inactive")
 
-        min_required = settings.RATE_STANDARD_PAISE_PER_MIN
+        agent_rate = BillingService.get_agent_call_rate(conn, agent_id)
+        min_required = agent_rate["rate_paise_per_min"]
         if tenant["wallet_balance_paise"] < min_required and not is_sandbox:
             raise InsufficientBalanceError(
                 f"Insufficient funds: available ₹{tenant['wallet_balance_paise']/100:.2f}, minimum ₹{min_required/100:.2f} needed to dial"
@@ -137,10 +145,12 @@ class CallService:
         if is_completed:
             duration = event.duration_seconds
             is_connected = duration > 0
+            agent_rate = BillingService.get_agent_call_rate(conn, call["agent_id"])
             cost_info = BillingService.calculate_call_cost(
                 duration_seconds=duration,
-                rate_paise_per_min=settings.RATE_STANDARD_PAISE_PER_MIN,
-                connected=is_connected
+                rate_paise_per_min=agent_rate["rate_paise_per_min"],
+                connected=is_connected,
+                increment_seconds=agent_rate["increment_seconds"],
             )
             billable_seconds = cost_info["billable_seconds"]
             cost_paise = cost_info["cost_paise"]
@@ -148,28 +158,67 @@ class CallService:
             if cost_paise > 0 and call["cost_paise"] == 0:
                 idempotency_key = f"call_debit_{call_id}"
                 desc = f"Call usage: {call['contact_name']} ({call['phone']}) - {duration}s"
-                BillingService.debit_wallet(
-                    conn=conn,
-                    tenant_id=tenant_id,
-                    amount_paise=cost_paise,
-                    description=desc,
-                    idempotency_key=idempotency_key,
-                    invoice_id=f"INV-CALL-{call_id[-6:].upper()}"
+                try:
+                    BillingService.debit_wallet(
+                        conn=conn,
+                        tenant_id=tenant_id,
+                        amount_paise=cost_paise,
+                        description=desc,
+                        idempotency_key=idempotency_key,
+                        invoice_id=f"INV-CALL-{call_id[-6:].upper()}",
+                        commit=False,
+                    )
+                except InsufficientBalanceError as exc:
+                    from services.audit_service import AuditService
+                    AuditService.notify(
+                        conn,
+                        tenant_id=tenant_id,
+                        title="Call Usage Billing Shortfall",
+                        message=f"Could not debit ₹{cost_paise / 100.0:.2f} for call {call_id}: {exc}",
+                        category="billing",
+                        severity="critical",
+                        commit=False,
+                    )
+
+        # Record estimated provider COGS (BILL-F07) for real/billed duration once per completed call
+        if is_completed and duration > 0 and not call["is_sandbox"]:
+            cur.execute("SELECT 1 FROM provider_usage_costs WHERE call_id = ? LIMIT 1", (call_id,))
+            if not cur.fetchone():
+                mins = duration / 60.0
+                tel_paise = int(round(mins * 40))  # ~₹0.40/min telephony carrier COGS estimate
+                ai_paise = int(round(mins * 35))   # ~₹0.35/min STT+LLM+TTS COGS estimate
+                tel_prov = (call["provider"] or "exotel") if dict(call).get("provider") else "exotel"
+                cur.execute(
+                    """
+                    INSERT INTO provider_usage_costs (id, tenant_id, call_id, category, provider_name, units, estimated_cost_paise, created_at)
+                    VALUES (?, ?, ?, 'telephony', ?, ?, ?, ?)
+                    """,
+                    (f"puc_{uuid.uuid4().hex[:8]}", tenant_id, call_id, tel_prov, round(mins, 3), tel_paise, now),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO provider_usage_costs (id, tenant_id, call_id, category, provider_name, units, estimated_cost_paise, created_at)
+                    VALUES (?, ?, ?, 'voice_ai', 'ai_pipeline', ?, ?, ?)
+                    """,
+                    (f"puc_{uuid.uuid4().hex[:8]}", tenant_id, call_id, round(mins, 3), ai_paise, now),
                 )
 
         cur.execute("""
         UPDATE calls
         SET status = ?,
-            duration_seconds = MAX(duration_seconds, ?),
-            billable_duration_seconds = MAX(billable_duration_seconds, ?),
-            cost_paise = MAX(cost_paise, ?),
+            duration_seconds = CASE WHEN COALESCE(duration_seconds, 0) < ? THEN ? ELSE duration_seconds END,
+            billable_duration_seconds = CASE WHEN COALESCE(billable_duration_seconds, 0) < ? THEN ? ELSE billable_duration_seconds END,
+            cost_paise = CASE WHEN COALESCE(cost_paise, 0) < ? THEN ? ELSE cost_paise END,
             recording_url = COALESCE(?, recording_url),
             ended_at = ?
         WHERE id = ?
         """, (
             event.status,
             event.duration_seconds,
+            event.duration_seconds,
             billable_seconds,
+            billable_seconds,
+            cost_paise,
             cost_paise,
             event.recording_url,
             now,
@@ -206,6 +255,7 @@ class CallService:
                         "cost_paise": cost_paise,
                         "phone": call["phone"],
                         "contact_name": call["contact_name"],
+                        "transcript": call["transcript"],
                     },
                     idempotency_key=f"wh_call_{call_id}_{event.status}",
                 )

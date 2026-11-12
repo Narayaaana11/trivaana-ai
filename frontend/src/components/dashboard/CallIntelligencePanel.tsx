@@ -77,17 +77,11 @@ export const CallIntelligencePanel: React.FC = () => {
   };
 
   const handleExportCallsCsv = async () => {
-    const token = localStorage.getItem('trivaana_token');
-    const res = await fetch('/api/calls/export', {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'trivaana_call_history.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    try {
+      await trivaanaApi.downloadCallsCsv();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Failed to export CSV' });
+    }
   };
 
   const handleSimulateInbound = async () => {
@@ -220,8 +214,12 @@ export const CallIntelligencePanel: React.FC = () => {
                   </button>
                   <button
                     onClick={async () => {
-                      const wa = await trivaanaApi.retriggerWhatsApp(selectedCall.id);
-                      setFeedback({ type: wa.configured ? 'success' : 'error', message: wa.message || `WhatsApp status: ${wa.status}` });
+                      try {
+                        const wa = await trivaanaApi.retriggerWhatsApp(selectedCall.id);
+                        setFeedback({ type: wa.configured ? 'success' : 'error', message: wa.message || `WhatsApp status: ${wa.status}` });
+                      } catch (err: any) {
+                        setFeedback({ type: 'error', message: err.message });
+                      }
                     }}
                     className="px-3 py-1.5 rounded-xl bg-emerald-600 text-white text-xs font-bold cursor-pointer"
                   >
@@ -256,9 +254,14 @@ export const CallIntelligencePanel: React.FC = () => {
 
               {/* Summary & Sentiment */}
               <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-2">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="font-bold text-slate-800">AI Call Summary</span>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {selectedCall.qa_extraction && (
+                      <span className="px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 border border-orange-200 text-[10px] font-bold tabular-nums">
+                        QA Score: {selectedCall.qa_extraction.qualification_score}/100
+                      </span>
+                    )}
                     <span className="px-2 py-0.5 rounded-full bg-white border text-[10px] font-bold uppercase">{selectedCall.sentiment || 'neutral'}</span>
                     {selectedCall.summary && (
                       <button
@@ -271,6 +274,35 @@ export const CallIntelligencePanel: React.FC = () => {
                   </div>
                 </div>
                 <p className="text-slate-700">{selectedCall.summary || 'Click "Analyze Summary" to extract summary, sentiment, and structured fields.'}</p>
+                {selectedCall.qa_extraction && (
+                  <div className="space-y-1.5 pt-1 border-t border-slate-200/70">
+                    {selectedCall.qa_extraction.next_action && (
+                      <div className="text-[11px] text-slate-700">
+                        <strong className="text-slate-500">Next Action:</strong> {selectedCall.qa_extraction.next_action}
+                      </div>
+                    )}
+                    {selectedCall.qa_extraction.objections && selectedCall.qa_extraction.objections.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="text-[10px] font-bold text-rose-700 uppercase">Objections:</span>
+                        {selectedCall.qa_extraction.objections.map((obj: string) => (
+                          <span key={obj} className="px-2 py-0.5 rounded-full bg-rose-50 border border-rose-200 text-rose-800 text-[10px] font-semibold">
+                            {obj}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {selectedCall.qa_extraction.competitors_mentioned && selectedCall.qa_extraction.competitors_mentioned.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1">
+                        <span className="text-[10px] font-bold text-indigo-700 uppercase">Competitors:</span>
+                        {selectedCall.qa_extraction.competitors_mentioned.map((comp: string) => (
+                          <span key={comp} className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-800 text-[10px] font-semibold">
+                            {comp}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 {selectedCall.extracted_data && Object.keys(selectedCall.extracted_data).length > 0 && (
                   <div className="space-y-2 pt-1">
                     <div className="flex flex-wrap gap-1.5">

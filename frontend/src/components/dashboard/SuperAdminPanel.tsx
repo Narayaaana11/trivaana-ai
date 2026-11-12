@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { AuroraBackground, FuzzyText, HoloCard } from '@/components/reactbits';
-import { ShieldAlert, CheckCircle2, AlertCircle, PhoneOff, Bug, ClipboardList, Layers } from 'lucide-react';
+import { ShieldAlert, CheckCircle2, AlertCircle, PhoneOff, Bug, ClipboardList, Layers, Users } from 'lucide-react';
 
 export const SuperAdminPanel: React.FC = () => {
-  const [adminTab, setAdminTab] = useState<'overview' | 'failed_calls' | 'errors' | 'audit_logs'>('overview');
+  const [adminTab, setAdminTab] = useState<'overview' | 'users' | 'failed_calls' | 'errors' | 'audit_logs'>('overview');
   const [overview, setOverview] = useState<any>(null);
   const [workspaces, setWorkspaces] = useState<any[]>([]);
+  const [platformUsers, setPlatformUsers] = useState<any[]>([]);
   const [flags, setFlags] = useState<any[]>([]);
   const [tariffs, setTariffs] = useState<any>(null);
   const [failedCalls, setFailedCalls] = useState<any[]>([]);
@@ -16,16 +17,18 @@ export const SuperAdminPanel: React.FC = () => {
 
   const loadAdmin = async () => {
     try {
-      const [ov, ws, fl, fc, se, al] = await Promise.all([
+      const [ov, ws, fl, fc, se, al, pu] = await Promise.all([
         trivaanaApi.getAdminOverview(),
         trivaanaApi.getAdminWorkspaces(),
         trivaanaApi.getAdminFeatureFlags(),
         trivaanaApi.getAdminFailedCalls().catch(() => ({ failed_calls: [] })),
         trivaanaApi.getAdminSystemErrors().catch(() => ({ errors: [] })),
         trivaanaApi.getAdminAuditLogs().catch(() => ({ audit_logs: [] })),
+        trivaanaApi.getAdminUsers().catch(() => ({ users: [] })),
       ]);
       setOverview(ov);
       setWorkspaces(ws.workspaces || []);
+      setPlatformUsers(pu.users || []);
       setFlags(fl.feature_flags || []);
       setFailedCalls(fc.failed_calls || []);
       setSystemErrors(se.errors || []);
@@ -91,6 +94,7 @@ export const SuperAdminPanel: React.FC = () => {
         {(
           [
             { id: 'overview', label: 'Workspaces & Controls', icon: Layers },
+            { id: 'users', label: `Platform Users (${platformUsers.length})`, icon: Users },
             { id: 'failed_calls', label: `Failed Calls (${failedCalls.length})`, icon: PhoneOff },
             { id: 'errors', label: `System Errors (${systemErrors.length})`, icon: Bug },
             { id: 'audit_logs', label: `Audit Logs (${auditLogs.length})`, icon: ClipboardList },
@@ -156,6 +160,18 @@ export const SuperAdminPanel: React.FC = () => {
                   <input type="number" value={tariffs.number_rental_paise_per_month} onChange={(e) => setTariffs({ ...tariffs, number_rental_paise_per_month: Number(e.target.value) })} className="w-full px-3 py-1.5 rounded-xl border border-slate-200" />
                 </div>
                 <div>
+                  <label className="block text-[11px] text-slate-500 mb-1">Broadcast (paise/call)</label>
+                  <input type="number" value={tariffs.broadcast_paise_per_call ?? 0} onChange={(e) => setTariffs({ ...tariffs, broadcast_paise_per_call: Number(e.target.value) })} className="w-full px-3 py-1.5 rounded-xl border border-slate-200" />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-500 mb-1">Channel Rent (paise/mo)</label>
+                  <input type="number" value={tariffs.channel_rental_paise_per_month ?? 0} onChange={(e) => setTariffs({ ...tariffs, channel_rental_paise_per_month: Number(e.target.value) })} className="w-full px-3 py-1.5 rounded-xl border border-slate-200" />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-500 mb-1">GST (%)</label>
+                  <input type="number" value={tariffs.gst_percentage ?? 18} onChange={(e) => setTariffs({ ...tariffs, gst_percentage: Number(e.target.value) })} className="w-full px-3 py-1.5 rounded-xl border border-slate-200" />
+                </div>
+                <div>
                   <label className="block text-[11px] text-slate-500 mb-1">Rounding (sec)</label>
                   <input type="number" value={tariffs.rounding_increment_seconds} onChange={(e) => setTariffs({ ...tariffs, rounding_increment_seconds: Number(e.target.value) })} className="w-full px-3 py-1.5 rounded-xl border border-slate-200" />
                 </div>
@@ -195,6 +211,31 @@ export const SuperAdminPanel: React.FC = () => {
       </div>
       )}
 
+      {adminTab === 'users' && (
+        <div className="bg-white rounded-3xl p-6 border border-slate-200/90 space-y-3 text-xs">
+          <h2 className="text-sm font-bold text-slate-900">Platform Users Directory ({platformUsers.length})</h2>
+          {platformUsers.length === 0 ? (
+            <div className="py-10 text-center text-slate-400">No platform users found.</div>
+          ) : (
+            <div className="space-y-2">
+              {platformUsers.map((u) => (
+                <div key={u.id} className="p-3 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
+                  <div>
+                    <div className="font-bold text-slate-900">{u.full_name || u.email}</div>
+                    <div className="text-[11px] text-slate-500">
+                      {u.email} • {u.tenant_name || u.tenant_id} • Role: {u.role}
+                    </div>
+                  </div>
+                  <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 text-[10px] font-bold uppercase">
+                    {u.status || 'active'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {adminTab === 'failed_calls' && (
         <div className="bg-white rounded-3xl p-6 border border-slate-200/90 space-y-3 text-xs">
           <h2 className="text-sm font-bold text-slate-900">Failed / Disconnected Calls Monitor</h2>
@@ -205,7 +246,7 @@ export const SuperAdminPanel: React.FC = () => {
               {failedCalls.map((c) => (
                 <div key={c.id} className="p-3 rounded-2xl bg-slate-50 border border-slate-200 flex items-center justify-between">
                   <div>
-                    <div className="font-bold text-slate-900">{c.phone || c.phone_number} • {c.provider}</div>
+                    <div className="font-bold text-slate-900">{c.id} • {c.tenant_id || 'tenant'} • {c.provider || 'mock'} • {c.language || 'te-IN'}</div>
                     <div className="text-[11px] text-slate-500">Status: {c.status} • Outcome: {c.outcome}</div>
                   </div>
                   <span className="font-mono text-[11px] text-slate-400">{c.created_at}</span>

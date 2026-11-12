@@ -8,7 +8,9 @@ import hmac
 import hashlib
 import base64
 import requests
+import urllib.parse
 from typing import Dict, Any, Optional
+from xml.sax.saxutils import escape as _xml_escape
 from core.config import settings
 from providers.base import BaseTelephonyProvider, CallDispatchResult, CallStatusEvent
 
@@ -25,6 +27,21 @@ class TwilioTelephonyProvider(BaseTelephonyProvider):
         self.auth_token = auth_token or settings.TWILIO_AUTH_TOKEN
         self.caller_id = caller_id or settings.TWILIO_PHONE_NUMBER
         self.base_url = f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}"
+
+    @staticmethod
+    def mint_stream_token(call_id: str) -> str:
+        secret = (settings.TWILIO_AUTH_TOKEN or settings.JWT_SECRET).encode("utf-8")
+        return hmac.new(secret, f"twilio-stream:{call_id}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+    @classmethod
+    def verify_stream_token(cls, call_id: str, token: Optional[str]) -> bool:
+        if not token:
+            return False
+        expected = cls.mint_stream_token(call_id)
+        try:
+            return hmac.compare_digest(expected.encode("utf-8"), str(token).encode("utf-8"))
+        except (TypeError, ValueError):
+            return False
 
     @property
     def is_configured(self) -> bool:
@@ -170,12 +187,19 @@ class TwilioTelephonyProvider(BaseTelephonyProvider):
         }
 
         conf = lang_config.get(language, lang_config["te-IN"])
-        voice = conf["voice"]
-        tw_lang = conf["lang"]
-        greeting = prompt_text or conf["greeting"]
+        voice = _xml_escape(conf["voice"], {'"': "&quot;", "'": "&apos;"})
+        tw_lang = _xml_escape(conf["lang"], {'"': "&quot;", "'": "&apos;"})
+        greeting = _xml_escape(str(prompt_text or conf["greeting"]))
 
         base_url = settings.PUBLIC_BASE_URL.rstrip('/')
-        gather_action = f"{base_url}/api/calls/twiml-gather/{call_id}"
+        safe_call_id = urllib.parse.quote(str(call_id), safe="-_")
+        gather_action = _xml_escape(f"{base_url}/api/calls/twiml-gather/{safe_call_id}", {'"': "&quot;", "'": "&apos;"})
+        ws_base = base_url.replace("https://", "wss://").replace("http://", "ws://")
+        stream_token = TwilioTelephonyProvider.mint_stream_token(safe_call_id)
+        stream_url = _xml_escape(
+            f"{ws_base}/api/calls/stream/{safe_call_id}?provider=twilio&token={stream_token}",
+            {'"': "&quot;", "'": "&apos;"},
+        )
 
         return (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
@@ -183,6 +207,7 @@ class TwilioTelephonyProvider(BaseTelephonyProvider):
             f'    <Gather input="speech" language="{tw_lang}" timeout="4" action="{gather_action}" method="POST">\n'
             f'        <Say voice="{voice}" language="{tw_lang}">{greeting}</Say>\n'
             '    </Gather>\n'
+            f'    <Connect><Stream url="{stream_url}" /></Connect>\n'
             f'    <Say voice="{voice}" language="{tw_lang}">ధన్యవాదాలు, మీ సంభాషణ రికార్డ్ చేయబడింది.</Say>\n'
             '</Response>'
         )
@@ -214,3 +239,60 @@ class TwilioTelephonyProvider(BaseTelephonyProvider):
             recording_url=recording,
             raw_payload=payload
         )
+
+    def transfer_call(self, provider_call_id: str, to_phone: str) -> Dict[str, Any]:
+        if not self.is_configured:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "not_configured",
+                "provider": "twilio",
+                "error": "Twilio credentials not configured for live call transfer.",
+            }
+        if not provider_call_id:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "twilio",
+                "error": "Missing Twilio CallSid for transfer.",
+            }
+        twiml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\n'
+            "<Response>"
+            "<Say language=\"en-IN\">Connecting you to our specialist now.</Say>"
+            f"<Dial>{_xml_escape(str(to_phone))}</Dial>"
+            "</Response>"
+        )
+        try:
+            resp = requests.post(
+                f"{self.base_url}/Calls/{provider_call_id}.json",
+                auth=(self.account_sid, self.auth_token),
+                data={"Twiml": twiml},
+                timeout=10.0,
+            )
+            if resp.status_code in (200, 201):
+                return {
+                    "supported": True,
+                    "success": True,
+                    "status": "executed",
+                    "provider": "twilio",
+                    "provider_call_id": provider_call_id,
+                    "transfer_to": to_phone,
+                    "control_xml": twiml,
+                }
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "twilio",
+                "error": f"Twilio transfer failed ({resp.status_code}): {resp.text[:300]}",
+            }
+        except Exception as exc:
+            return {
+                "supported": True,
+                "success": False,
+                "status": "failed",
+                "provider": "twilio",
+                "error": str(exc),
+            }

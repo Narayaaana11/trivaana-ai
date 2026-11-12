@@ -4,9 +4,10 @@ Supports Celery + Redis when configured, plus standalone scheduled campaign acti
 automatic due-retry ticking, and running campaign queue progression.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 import time
+import uuid
 from typing import Any, Dict
 from core.config import settings
 from database import get_connection
@@ -88,7 +89,28 @@ def schedule_delayed_intake_call(
             countdown=max(1, int(delay_seconds)),
         )
         return {"scheduled": True, "backend": "celery", "task_id": str(task.id), "delay_seconds": delay_seconds}
-    return {"scheduled": True, "backend": "deferred_queue", "task_id": None, "delay_seconds": delay_seconds}
+
+    sched_id = f"sch_{uuid.uuid4().hex[:10]}"
+    now = datetime.now(timezone.utc)
+    scheduled_for = (now + timedelta(seconds=max(1, int(delay_seconds)))).isoformat()
+    conn = get_connection()
+    try:
+        conn.execute(
+            """
+            INSERT INTO scheduled_calls (
+                id, tenant_id, lead_id, contact_name, phone, language, agent_id,
+                call_category, is_sandbox, status, scheduled_for, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (
+                sched_id, tenant_id, lead_id, contact_name, phone, language, agent_id,
+                call_category, 1 if is_sandbox else 0, scheduled_for, now.isoformat(),
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return {"scheduled": True, "backend": "db_scheduler", "task_id": sched_id, "scheduled_for": scheduled_for, "delay_seconds": delay_seconds}
 
 
 def process_campaign_tick(tenant_id: str, campaign_id: str):
@@ -141,20 +163,69 @@ def process_due_retries_tick(conn) -> int:
     processed = 0
     for row in cur.fetchall():
         res = CampaignService.process_due_retries(conn, row["tenant_id"], row["id"])
-        processed += int(res.get("requeued_count", 0))
+        processed += int(res.get("requeued_count", res.get("dispatched", 0)))
     return processed
+
+
+def process_due_scheduled_calls(conn) -> int:
+    """Atomically claim and dispatch persisted delayed intake calls whose scheduled_for timestamp is due."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT * FROM scheduled_calls WHERE status = 'pending' AND scheduled_for <= ? ORDER BY scheduled_for ASC LIMIT 50",
+        (now_iso,),
+    )
+    candidates = cur.fetchall()
+    dispatched = 0
+    for row in candidates:
+        cur.execute(
+            "UPDATE scheduled_calls SET status = 'processing' WHERE id = ? AND status = 'pending'",
+            (row["id"],),
+        )
+        if cur.rowcount == 0:
+            continue
+        conn.commit()
+        try:
+            call_res = execute_delayed_intake_call(
+                tenant_id=row["tenant_id"],
+                lead_id=row["lead_id"],
+                contact_name=row["contact_name"],
+                phone=row["phone"],
+                language=row["language"],
+                agent_id=row["agent_id"],
+                call_category=row["call_category"],
+                is_sandbox=bool(row["is_sandbox"]),
+            )
+            cur.execute(
+                "UPDATE scheduled_calls SET status = 'dispatched', call_id = ? WHERE id = ?",
+                (call_res.get("call_id"), row["id"]),
+            )
+            dispatched += 1
+        except Exception as exc:
+            cur.execute(
+                "UPDATE scheduled_calls SET status = 'failed', last_error = ? WHERE id = ?",
+                (str(exc)[:200], row["id"]),
+            )
+    conn.commit()
+    return dispatched
 
 
 def run_worker_tick(conn) -> Dict[str, int]:
     activated = activate_due_scheduled_campaigns(conn)
     requeued = process_due_retries_tick(conn)
+    delayed_dispatched = process_due_scheduled_calls(conn)
     advanced = 0
     cur = conn.cursor()
     cur.execute("SELECT id, tenant_id FROM campaigns WHERE status = 'running'")
     for row in cur.fetchall():
         CampaignService.advance_campaign_queue(conn, row["tenant_id"], row["id"])
         advanced += 1
-    return {"activated": activated, "requeued": requeued, "advanced_campaigns": advanced}
+    return {
+        "activated": activated,
+        "requeued": requeued,
+        "delayed_dispatched": delayed_dispatched,
+        "advanced_campaigns": advanced,
+    }
 
 
 def run_worker_loop():

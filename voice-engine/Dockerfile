@@ -9,5 +9,5 @@ COPY backend /app/backend
 COPY voice-engine /app/voice-engine
 
 ENV PYTHONPATH=/app/backend:/app
-CMD ["python", "/app/voice-engine/agents/worker.py"]
+CMD ["python", "/app/voice-engine/agents/worker.py", "start"]
 

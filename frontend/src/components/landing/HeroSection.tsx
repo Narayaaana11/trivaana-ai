@@ -223,7 +223,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
             className="tracking-wide uppercase text-[11px] font-semibold"
           />
           <span className="text-[#d4d4dc]">·</span>
-          <span className="text-[#ff5500] font-bold">From ₹5.00/min</span>
+          <span className="text-[#ff5500] font-bold">From ₹6.50/min</span>
         </div>
 
         {/* Display Headline with BlurText, GradientText & RotatingText */}
@@ -425,7 +425,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
           <span className="text-[#c5c5d0]">·</span>
           <span>No card required</span>
           <span className="text-[#c5c5d0]">·</span>
-          <span className="text-[#ff5500] font-semibold">From ₹5 per minute</span>
+          <span className="text-[#ff5500] font-semibold">From ₹6.50 per minute</span>
         </div>
 
         {/* ReactBits LogoLoop Ecosystem Ticker */}

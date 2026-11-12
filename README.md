@@ -13,15 +13,15 @@
 
 ## 🌟 Overview
 
-Trivaana AI is a production-grade, enterprise-ready telecalling SaaS platform engineered specifically for the Indian market. It bridges the gap between ad form submission and customer engagement by initiating outbound phone calls in under 30 seconds in the prospect's native regional dialect (Telugu, Hindi, Indian English, Tamil, Kannada, Malayalam, and Marathi).
+Trivaana AI is an enterprise-ready telecalling SaaS platform engineered specifically for the Indian market. It provides a sandbox-verified foundation and credential-gated live connectors across 7 Indian dialect targets (`te-IN`, `hi-IN`, `en-IN`, `ta-IN`, `kn-IN`, `ml-IN`, `mr-IN`).
 
 ### Key Architectural Pillars
 
-- **⚡ Sub-30-Second Speed-to-Lead**: Connects with inbound prospects from Facebook Ads, MagicBricks, or website forms in an average of 11.4 seconds.
-- **🗺️ Autonomous OpenStreetMap (OSM) Lead Scout**: Continuously discovers verified local business prospects across Visakhapatnam, Hyderabad, Bengaluru, Mumbai, Pune, and Chennai without manual scraping.
-- **🛡️ Mandatory TRAI 10 AM – 6 PM Enforcement**: Enforces Indian telecom calling hour regulations with NDNC registry scrubbing and an emergency single-click concurrency kill switch.
-- **💰 Zero-Float-Drift Integer Paise Accounting**: Billing tracked down to whole integer paise (`1 INR = 100 paise`; ₹3.60/min = 6 paise/sec) preventing fractional floating point drift, paired with simulated Razorpay top-ups and 18% GST tax invoices.
-- **💬 WhatsApp Calendar Dispatcher**: Automatically sends meeting invites, Google Maps location pins, and follow-up brochures to prospects immediately after a call concludes.
+- **⚡ Instant Lead Callback**: Authenticated public lead-intake webhook (`POST /api/public/lead-intake/{agent_slug}`) with consent/DNC checks and durable DB-backed delayed scheduling (`scheduled_calls`).
+- **📋 CRM Import & Reusable Contact Lists**: CSV column-mapped imports and bulk paste with opt-in consent tracking (`consent_confirmed`), DNC scrubbing, and suppression lists (`Lead Scout` external discovery is gated until a provider is configured).
+- **🛡️ TRAI TCCCPR Compliance**: Configurable calling windows (default `09:00`–`21:00` IST / custom workspace policy), NDNC/DNC scrubbing, consent records, provider circuit breakers, and an emergency platform kill switch.
+- **💰 Zero-Float-Drift Integer Paise Accounting**: Append-only integer paise ledger (`1 INR = 100 paise`; Standard Voice ₹6.50/min, Premium Neural ₹8.50/min billed in 30s increments, ₹0 unconnected), Razorpay checkout/HMAC verification, and 18% GST SAC 998313 invoices.
+- **💬 Post-Call Actions & Workflows**: Google Calendar OAuth sync, Meta WhatsApp templates, SSRF-hardened custom API webhooks, warm call transfers, and visual React Flow workflows with conditional branching & optional Temporal dispatch.
 - **🎯 5 Turnkey Outpero Presets**: Pre-configured prompt directives and objection handling for:
   - Real Estate & Builders (Site visit scheduling)
   - Healthcare & Clinics (OPD reminders & follow-ups)
@@ -33,27 +33,20 @@ Trivaana AI is a production-grade, enterprise-ready telecalling SaaS platform en
 
 ## 🏗️ Repository Architecture
 
-```
+```text
 trivaana-ai/
 ├── backend/
-│   ├── database.py       # Thread-safe SQLite WAL engine, integer paise ledger & seed presets
-│   ├── main.py           # Production FastAPI REST server (OSM Scout, Speed-to-lead, Razorpay)
-│   └── requirements.txt  # FastAPI, uvicorn, pydantic
-├── frontend/
-│   ├── src/
-│   │   ├── components/
-│   │   │   ├── brand/    # Redesigned Trivaana vector acoustic logo
-│   │   │   ├── ui/       # Ambient aurora glow orbs & architectural grid pattern
-│   │   │   ├── reactbits/# BlurText, ShinyText, Magnet, SpotlightCard, CountUp
-│   │   │   ├── landing/  # High-converting marketing site (Hero, Presets, ROI Calc, Pricing)
-│   │   │   └── dashboard/# Full Mission Control dashboard & Dialpad sandbox
-│   │   ├── lib/          # Brand tokens, API client & Indian language registry
-│   │   ├── types/        # TypeScript interfaces
-│   │   └── App.tsx       # Landing page & dashboard switcher
-│   ├── package.json
-│   ├── vite.config.ts
-│   └── tsconfig.json
-└── README.md
+│   ├── core/             # Config, JWT/OIDC security, RBAC permissions, Fernet vault
+│   ├── database/         # SQLite WAL / PostgreSQL psycopg adapter & pgvector schema
+│   ├── providers/        # Exotel, Twilio, Plivo, Vobiz, Gemini, OpenAI, Sarvam, ElevenLabs, Razorpay
+│   ├── routers/          # Modular FastAPI routers (auth, agents, calls, campaigns, billing, admin, staff)
+│   ├── services/         # Domain logic (billing, compliance, actions, AI prompts, webhooks)
+│   ├── voice_engine/     # STT/TTS pipeline, 20ms telephony WebSocket streaming, LiveKit worker
+│   └── worker/           # Campaign/retry/scheduled-call worker tick
+├── frontend/             # React 19 + TypeScript + Vite SaaS Workspace, Super Admin & Staff Portals
+├── workers/              # Temporal workflow engine, webhook & COGS workers
+├── voice-engine/         # Evaluation harness & standalone container Dockerfile
+└── infrastructure/       # Terraform foundation (ECS, S3, SQS, Secrets Manager)
 ```
 
 ---

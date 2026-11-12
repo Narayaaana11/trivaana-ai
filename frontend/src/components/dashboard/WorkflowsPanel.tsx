@@ -106,6 +106,7 @@ export const WorkflowsPanel: React.FC = () => {
       )}
 
       <AgentWorkflowCanvas
+        key={activeWf?.id || 'new'}
         agentName={activeWf?.name || name}
         initialGraph={activeWf?.graph}
         onSaveGraph={async (graph) => {

@@ -42,6 +42,16 @@ class BaseTelephonyProvider(ABC):
         """Sever an active call on the carrier network."""
         pass
 
+    def transfer_call(self, provider_call_id: str, to_phone: str) -> Dict[str, Any]:
+        """Transfer an active call to a human specialist if supported by the carrier."""
+        return {
+            "supported": False,
+            "success": False,
+            "status": "not_supported",
+            "provider": getattr(self, "name", "unknown"),
+            "error": f"Live call transfer is not supported by provider '{getattr(self, 'name', 'unknown')}'.",
+        }
+
     @abstractmethod
     def verify_webhook(self, headers: Dict[str, str], raw_body: bytes) -> bool:
         """Verify authenticity of provider callback event."""

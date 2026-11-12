@@ -50,6 +50,20 @@ class MockTelephonyProvider(BaseTelephonyProvider):
             return True
         return False
 
+    def transfer_call(self, provider_call_id: str, to_phone: str) -> Dict[str, Any]:
+        if provider_call_id in self.active_calls:
+            self.active_calls[provider_call_id]["status"] = "transferred"
+            self.active_calls[provider_call_id]["transferred_to"] = to_phone
+        return {
+            "supported": True,
+            "success": True,
+            "simulated": True,
+            "status": "simulated",
+            "provider": "mock",
+            "provider_call_id": provider_call_id,
+            "transfer_to": to_phone,
+        }
+
     def verify_webhook(self, headers: Dict[str, str], raw_body: bytes) -> bool:
         # Mock webhook always verifies in test/sandbox
         return True

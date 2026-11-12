@@ -5,6 +5,8 @@ import { AppSidebar } from '@/components/dashboard/AppSidebar';
 import { OverviewPanel } from '@/components/dashboard/OverviewPanel';
 import { LeadManagementPanel } from '@/components/dashboard/LeadManagementPanel';
 import { FinancialLedgerPanel } from '@/components/dashboard/FinancialLedgerPanel';
+import { VoiceBroadcastPanel } from '@/components/dashboard/VoiceBroadcastPanel';
+import { IntegrationsPanel } from '@/components/dashboard/IntegrationsPanel';
 import { LandingPage } from '@/components/landing/LandingPage';
 import { DocsPortalPage } from '@/components/landing/DocsPortalPage';
 import { MissionControl } from '@/components/dashboard/MissionControl';
@@ -178,9 +180,9 @@ describe('Trivaana AI Core UI Components', () => {
 
     render(<FinancialLedgerPanel tenant={mockTenant} />);
 
-    expect(screen.getByText(/GST \(18% SAC 998313\):/i)).toBeInTheDocument();
-    expect(screen.getByText('₹180.00')).toBeInTheDocument();
-    expect(screen.getByText('₹1180.00')).toBeInTheDocument();
+    expect(screen.getByText(/GST \(18% Incl\. SAC 998313\):/i)).toBeInTheDocument();
+    expect(screen.getByText('₹152.54')).toBeInTheDocument();
+    expect(screen.getByText('₹1000.00')).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /Billing Details/i }));
     await waitFor(() => {
@@ -404,6 +406,115 @@ describe('Trivaana AI Core UI Components', () => {
     render(<MissionControl onExitDashboard={vi.fn()} />);
     await waitFor(() => {
       expect(screen.getByText(/Legal \/ Workspace Entity Name/i)).toBeInTheDocument();
+    });
+  });
+
+  it('displays backend res.added count cleanly in VoiceBroadcastPanel CSV upload', async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('/broadcasts/bc_1/recipients/csv')) {
+        return { ok: true, json: async () => ({ status: 'imported', added: 7, dnc_blocked: 0 }) } as any;
+      }
+      if (url.includes('/broadcasts')) {
+        return {
+          ok: true,
+          json: async () => ({
+            broadcasts: [{ id: 'bc_1', name: 'Diwali Alert', status: 'draft', total_recipients: 0, completed_count: 0 }],
+          }),
+        } as any;
+      }
+      return { ok: true, json: async () => ({ leads: [], audio_files: [] }) } as any;
+    });
+
+    const { container } = render(<VoiceBroadcastPanel />);
+    await waitFor(() => {
+      expect(screen.getByText('Diwali Alert')).toBeInTheDocument();
+    });
+
+    const fileInput = container.querySelector('input[type="file"][accept=".csv"]') as HTMLInputElement;
+    expect(fileInput).toBeTruthy();
+    const csvFile = new File(['phone\n+919848011223'], 'recipients.csv', { type: 'text/csv' });
+    fireEvent.change(fileInput, { target: { files: [csvFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Added 7 CSV recipient\(s\) to Diwali Alert\./i)).toBeInTheDocument();
+    });
+  });
+
+  it('sends consent_confirmed from LeadManagementPanel CSV import modal and saves integration credentials in IntegrationsPanel', async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url: string, _opts?: any) => {
+      if (url.includes('/leads/upload')) {
+        return { ok: true, json: async () => ({ imported_count: 1, rejected_count: 0 }) } as any;
+      }
+      if (url.includes('/leads')) {
+        return { ok: true, json: async () => ({ leads: [] }) } as any;
+      }
+      if (url.includes('/integrations/google_calendar/connect')) {
+        return { ok: true, json: async () => ({ status: 'connected' }) } as any;
+      }
+      if (url.includes('/integrations')) {
+        return {
+          ok: true,
+          json: async () => ({
+            integrations: [
+              {
+                provider_key: 'google_calendar',
+                display_name: 'Google Calendar',
+                status: 'not_configured',
+                description: 'Sync booked slots',
+              },
+            ],
+            logs: [],
+          }),
+        } as any;
+      }
+      if (url.includes('/webhooks')) {
+        return { ok: true, json: async () => ({ webhooks: [] }) } as any;
+      }
+      if (url.includes('/whatsapp/templates')) {
+        return { ok: true, json: async () => ({ templates: [] }) } as any;
+      }
+      return { ok: true, json: async () => ({}) } as any;
+    });
+    globalThis.fetch = fetchMock;
+
+    const { container, unmount } = render(<LeadManagementPanel />);
+    const fileInput = container.querySelector('input[type="file"][accept=".csv"]') as HTMLInputElement;
+    const csvFile = new File(['FullName,Mobile\nKiran,+919848055566'], 'leads.csv', { type: 'text/csv' });
+    if (!csvFile.text) {
+      (csvFile as any).text = async () => 'FullName,Mobile\nKiran,+919848055566';
+    }
+    fireEvent.change(fileInput, { target: { files: [csvFile] } });
+
+    await waitFor(() => {
+      expect(screen.getByText('Map CSV Columns')).toBeInTheDocument();
+    });
+    const consentCheckbox = screen.getByLabelText(/I confirm these CSV contacts gave prior opt-in consent/i);
+    fireEvent.click(consentCheckbox);
+    fireEvent.click(screen.getByRole('button', { name: /Import Mapped CSV/i }));
+
+    await waitFor(() => {
+      const uploadCall = fetchMock.mock.calls.find(([u]) => String(u).includes('/leads/upload'));
+      expect(uploadCall).toBeTruthy();
+      const body = uploadCall?.[1]?.body as FormData;
+      expect(body.get('consent_confirmed')).toBe('true');
+    });
+    unmount();
+
+    render(<IntegrationsPanel />);
+    await waitFor(() => {
+      expect(screen.getByText('Google Calendar')).toBeInTheDocument();
+    });
+    const tokenInput = screen.getByPlaceholderText('OAuth Access Token');
+    fireEvent.change(tokenInput, { target: { value: 'ya29.real_token' } });
+    fireEvent.change(screen.getByPlaceholderText(/Calendar ID/i), { target: { value: 'primary' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save & Connect/i }));
+
+    await waitFor(() => {
+      const connectCall = fetchMock.mock.calls.find(([u]) => String(u).includes('/integrations/google_calendar/connect'));
+      expect(connectCall).toBeTruthy();
+      const payload = JSON.parse(connectCall?.[1]?.body || '{}');
+      expect(payload.config.access_token).toBe('ya29.real_token');
+      expect(payload.config.calendar_id).toBe('primary');
     });
   });
 });

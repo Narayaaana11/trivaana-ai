@@ -64,8 +64,8 @@ const DOC_ARTICLES: DocArticle[] = [
     subtitle: 'Prepaid wallet in INR with automated 18% GST tax invoices (SAC 998313).',
     anchors: ['Standard vs Premium voices', 'Numbers & Concurrent channels', 'GST Invoicing'],
     body: [
-      'Standard Indian neural voices (Sarvam & native dialects) are billed at ₹5.00/min connected talk time. Premium voices (ElevenLabs Studio / custom clones) are billed at ₹6.80/min.',
-      'Dedicated business phone numbers are ₹649–₹1,499/month depending on virtual mobile vs regional 044/080/040 landline DID, and each concurrent calling channel is ₹649/month.',
+      'Standard Indian neural voices (Sarvam & native dialects) are billed at ₹6.50/min connected talk time. Premium voices (ElevenLabs Studio / custom clones) are billed at ₹8.50/min.',
+      'Dedicated business phone numbers are ₹799/month base allocation (₹649–₹1,499/month by carrier/DID), and each concurrent calling channel is ₹649/month.',
       'Every top-up automatically issues a compliant 18% GST SAC 998313 invoice with ITC eligibility.',
     ],
   },
@@ -259,7 +259,7 @@ export const DocsPortalPage: React.FC<DocsPortalPageProps> = ({
                 </div>
                 <div className="p-3.5 rounded-2xl bg-white border border-[#e4e4e9]">
                   <CreditCard className="w-4 h-4 text-emerald-600 mb-1.5" />
-                  <div className="font-display text-xl font-extrabold">₹5–₹6.8</div>
+                  <div className="font-display text-xl font-extrabold">₹6.50–₹8.50</div>
                   <div className="text-[11px] text-[#6e7e]">Per connected min</div>
                 </div>
                 <div className="p-3.5 rounded-2xl bg-white border border-[#e4e4e9]">

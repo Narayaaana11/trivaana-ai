@@ -15,12 +15,13 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from core.config import settings
+from providers import get_telephony_provider
 from providers.voice_adapters import get_voice_provider
 from services.call_service import normalize_phone
 from services.compliance_service import ComplianceService
-from services.billing_service import BillingService
+from services.billing_service import BillingService, InsufficientBalanceError
 from services.storage_service import StorageService
 
 router = APIRouter(prefix="/api/broadcasts", tags=["Voice Broadcast"])
@@ -38,7 +39,7 @@ class CreateBroadcastRequest(BaseModel):
     recipients: List[dict] = []
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("broadcasts:read"))])
 def list_broadcasts(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -49,7 +50,7 @@ def list_broadcasts(
     return {"broadcasts": items, "count": len(items)}
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_scope("broadcasts:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_broadcast(
     req: CreateBroadcastRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -98,7 +99,7 @@ def create_broadcast(
     return {"status": "created", "broadcast_id": bid, "total_recipients": added}
 
 
-@router.post("/upload-audio")
+@router.post("/upload-audio", dependencies=[Depends(require_scope("broadcasts:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 async def upload_broadcast_audio(
     file: UploadFile = File(...),
     tenant: dict = Depends(get_current_tenant),
@@ -122,7 +123,7 @@ async def upload_broadcast_audio(
     return {"status": "uploaded", **stored}
 
 
-@router.post("/{broadcast_id}/preview-audio")
+@router.post("/{broadcast_id}/preview-audio", dependencies=[Depends(require_scope("broadcasts:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def preview_broadcast_audio(
     broadcast_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -155,7 +156,7 @@ def preview_broadcast_audio(
     }
 
 
-@router.post("/{broadcast_id}/recipients/csv")
+@router.post("/{broadcast_id}/recipients/csv", dependencies=[Depends(require_scope("broadcasts:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 async def upload_broadcast_csv(
     broadcast_id: str,
     file: UploadFile = File(...),
@@ -167,7 +168,24 @@ async def upload_broadcast_csv(
     if not cur.fetchone():
         raise HTTPException(status_code=404, detail="Broadcast not found")
 
-    raw = await file.read()
+    filename = (file.filename or "").lower()
+    if not filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only .csv recipient files are supported")
+
+    max_bytes = 10 * 1024 * 1024
+    chunks: List[bytes] = []
+    total_read = 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total_read += len(chunk)
+        if total_read > max_bytes:
+            raise HTTPException(status_code=413, detail="Broadcast CSV exceeds maximum allowed size of 10 MB")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    if not raw.strip():
+        raise HTTPException(status_code=400, detail="Broadcast CSV file is empty")
     text = raw.decode("utf-8-sig", errors="ignore")
     reader = csv.DictReader(io.StringIO(text))
     now = datetime.now(timezone.utc).isoformat()
@@ -196,13 +214,20 @@ async def upload_broadcast_csv(
     return {"status": "imported", "added": added, "dnc_blocked": blocked}
 
 
-@router.post("/{broadcast_id}/start")
+@router.post("/{broadcast_id}/start", dependencies=[Depends(require_scope("broadcasts:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def start_broadcast(
     broadcast_id: str,
     is_sandbox: bool = False,
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
 ):
+    pause = ComplianceService.get_emergency_pause(db)
+    if pause["paused"]:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Outbound calling paused by platform administrator: {pause['reason']}",
+        )
+
     cur = db.cursor()
     cur.execute("SELECT * FROM voice_broadcasts WHERE id = ? AND tenant_id = ?", (broadcast_id, tenant["id"]))
     b = cur.fetchone()
@@ -217,21 +242,80 @@ def start_broadcast(
     if not pending:
         raise HTTPException(status_code=400, detail="No pending eligible recipients in broadcast")
 
-    use_sandbox = is_sandbox or bool(b["is_sandbox"]) or (not settings.has_exotel and not settings.has_twilio)
+    use_sandbox = is_sandbox or bool(b["is_sandbox"]) or (
+        not settings.has_exotel and not settings.has_twilio and not settings.has_plivo and not settings.has_vobiz
+    )
+    if not use_sandbox and not ComplianceService.is_within_calling_hours("09:00", "21:00"):
+        raise HTTPException(
+            status_code=400,
+            detail="Voice broadcast blocked: outside TRAI permitted calling window (09:00-21:00 IST).",
+        )
+
+    audio_url = b["audio_url"]
+    if not audio_url and b["message_text"]:
+        try:
+            tts = get_voice_provider(b["voice_provider"] or "sarvam")
+            if getattr(tts, "is_configured", False):
+                synth = tts.synthesize_speech(
+                    text=b["message_text"],
+                    language=b["language"] or "te-IN",
+                    voice_id=b["voice_id"] or "meera",
+                )
+                saved = StorageService.save_file(
+                    tenant_id=tenant["id"],
+                    category="broadcasts",
+                    filename=f"{broadcast_id}.mp3",
+                    content=synth,
+                    content_type="audio/mpeg",
+                )
+                audio_url = saved.get("url") or audio_url
+        except Exception:
+            pass
+
+    tel_provider = None if use_sandbox else get_telephony_provider()
     now = datetime.now(timezone.utc).isoformat()
     delivered = 0
+    failed_count = 0
     total_cost_paise = 0
 
     for rec in pending:
         per_call_paise = 0 if use_sandbox else settings.BROADCAST_PAISE_PER_CALL
-        if per_call_paise > 0:
-            BillingService.debit_wallet(
-                conn=db,
-                tenant_id=tenant["id"],
-                amount_paise=per_call_paise,
-                description=f"Voice Broadcast ({b['name']}) -> {rec['phone']}",
-                idempotency_key=f"brc_{broadcast_id}_{rec['id']}",
+        if not use_sandbox:
+            if not tel_provider or not getattr(tel_provider, "is_configured", False):
+                raise HTTPException(
+                    status_code=503,
+                    detail="Live voice broadcast requested, but no telephony provider is configured.",
+                )
+            dispatch_res = tel_provider.initiate_call(
+                to_phone=rec["phone"],
+                extra_data={
+                    "call_id": rec["id"],
+                    "broadcast_id": broadcast_id,
+                    "audio_url": audio_url,
+                    "language": b["language"],
+                },
             )
+            if not dispatch_res.success:
+                cur.execute(
+                    "UPDATE voice_broadcast_recipients SET status = 'failed', updated_at = ? WHERE id = ?",
+                    (now, rec["id"]),
+                )
+                failed_count += 1
+                continue
+
+        if per_call_paise > 0:
+            try:
+                BillingService.debit_wallet(
+                    conn=db,
+                    tenant_id=tenant["id"],
+                    amount_paise=per_call_paise,
+                    description=f"Voice Broadcast ({b['name']}) -> {rec['phone']}",
+                    idempotency_key=f"brc_{broadcast_id}_{rec['id']}",
+                    commit=False,
+                )
+            except InsufficientBalanceError as exc:
+                db.rollback()
+                raise HTTPException(status_code=402, detail=str(exc))
             total_cost_paise += per_call_paise
 
         final_status = "delivered" if use_sandbox else "playing"
@@ -245,22 +329,23 @@ def start_broadcast(
         """
         UPDATE voice_broadcasts
         SET status = ?, delivered_count = delivered_count + ?, total_cost_paise = total_cost_paise + ?,
-            is_sandbox = ?, updated_at = ?
+            audio_url = COALESCE(?, audio_url), is_sandbox = ?, updated_at = ?
         WHERE id = ?
         """,
-        ("completed" if use_sandbox else "running", delivered, total_cost_paise, 1 if use_sandbox else 0, now, broadcast_id),
+        ("completed" if use_sandbox else "running", delivered, total_cost_paise, audio_url, 1 if use_sandbox else 0, now, broadcast_id),
     )
     db.commit()
     return {
         "status": "completed" if use_sandbox else "running",
         "broadcast_id": broadcast_id,
         "processed_count": delivered,
+        "failed_count": failed_count,
         "total_cost_paise": total_cost_paise,
         "is_sandbox": use_sandbox,
     }
 
 
-@router.post("/{broadcast_id}/pause")
+@router.post("/{broadcast_id}/pause", dependencies=[Depends(require_scope("broadcasts:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def pause_broadcast(
     broadcast_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -274,7 +359,7 @@ def pause_broadcast(
     return {"status": "paused", "broadcast_id": broadcast_id}
 
 
-@router.get("/{broadcast_id}")
+@router.get("/{broadcast_id}", dependencies=[Depends(require_scope("broadcasts:read"))])
 def get_broadcast_details(
     broadcast_id: str,
     tenant: dict = Depends(get_current_tenant),

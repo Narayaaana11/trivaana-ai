@@ -15,6 +15,7 @@ import {
   PublicContactPage,
 } from './PublicPages';
 import { DocsPortalPage } from './DocsPortalPage';
+import { PublicLegalPage } from './LegalPages';
 
 export type PublicRoute =
   | 'home'
@@ -24,7 +25,10 @@ export type PublicRoute =
   | 'campaigns'
   | 'inbound'
   | 'contact'
-  | 'docs';
+  | 'docs'
+  | 'terms'
+  | 'privacy'
+  | 'dnd-policy';
 
 interface LandingPageProps {
   onEnterDashboard: () => void;
@@ -129,6 +133,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
 
         {activeRoute === 'contact' && (
           <PublicContactPage onEnterDashboard={onEnterDashboard} />
+        )}
+
+        {(activeRoute === 'terms' ||
+          activeRoute === 'privacy' ||
+          activeRoute === 'dnd-policy') && (
+          <PublicLegalPage
+            docType={activeRoute}
+            onNavigateLegal={(doc) => navigateRoute(doc)}
+            onBackHome={() => navigateRoute('home')}
+            onNavigateContact={() => navigateRoute('contact')}
+          />
         )}
       </main>
 

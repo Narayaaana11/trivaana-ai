@@ -14,6 +14,10 @@ export const IncomingCallsPanel: React.FC<IncomingCallsPanelProps> = ({
   initialSubTab = 'overview',
 }) => {
   const [subTab, setSubTab] = useState<'overview' | 'calls' | 'messages' | 'missed'>(initialSubTab);
+
+  useEffect(() => {
+    setSubTab(initialSubTab);
+  }, [initialSubTab]);
   const [numbers, setNumbers] = useState<any[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [inboundCalls, setInboundCalls] = useState<CallLog[]>([]);
@@ -162,6 +166,13 @@ export const IncomingCallsPanel: React.FC<IncomingCallsPanelProps> = ({
 
       {(subTab === 'calls' || subTab === 'messages' || subTab === 'missed') && (
         <div className="bg-white rounded-3xl p-6 border border-slate-200/90 space-y-2 text-xs">
+          <div className="font-bold text-sm text-slate-900 mb-2">
+            {subTab === 'missed'
+              ? 'Missed / Callback Queue'
+              : subTab === 'messages'
+              ? 'Voicemails & Transcripts'
+              : 'All Inbound Calls'}
+          </div>
           {(() => {
             const list =
               subTab === 'missed'

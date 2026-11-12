@@ -24,6 +24,10 @@ interface SettingsPanelProps {
 
 export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'general' }) => {
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
   const [workspace, setWorkspace] = useState<any>(null);
   const [userProfile, setUserProfile] = useState<any>(null);
   const [fullNameInput, setFullNameInput] = useState('');
@@ -40,6 +44,11 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
   const [newKeyName, setNewKeyName] = useState('');
   const [createdKey, setCreatedKey] = useState<string | null>(null);
   const [dncPhone, setDncPhone] = useState('');
+  const [dltList, setDltList] = useState<any[]>([]);
+  const [ncprJobs, setNcprJobs] = useState<any[]>([]);
+  const [dltForm, setDltForm] = useState({ entity_name: '', pe_id: '', tm_id: '', header_id: '', template_id: '', template_name: '', call_category: 'promotional' });
+  const [ncprPhonesInput, setNcprPhonesInput] = useState('');
+  const [lastNcprResult, setLastNcprResult] = useState<any>(null);
   const [dispositions, setDispositions] = useState<Record<string, string>>({});
   const [alertPrefs, setAlertPrefs] = useState({
     liveCallBanner: true,
@@ -50,7 +59,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
 
   const loadAll = async () => {
     try {
-      const [w, me, m, k, p, d, mem, con, aud, disp] = await Promise.all([
+      const [w, me, m, k, p, d, mem, con, aud, disp, dltRes, ncprRes] = await Promise.all([
         trivaanaApi.getWorkspace(),
         trivaanaApi.getMe().catch(() => null),
         trivaanaApi.getWorkspaceMembers(),
@@ -61,6 +70,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
         trivaanaApi.getConsents().catch(() => ({ consents: [] })),
         trivaanaApi.getAuditLogs().catch(() => ({ audit_logs: [] })),
         trivaanaApi.getDispositions().catch(() => ({ mapping: {} })),
+        trivaanaApi.listDltRegistrations().catch(() => ({ registrations: [] })),
+        trivaanaApi.listNcprJobs().catch(() => ({ jobs: [] })),
       ]);
       setWorkspace(w);
       if (me) {
@@ -75,6 +86,8 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
       setConsents(con.consents || []);
       setAuditLogs(aud.audit_logs || []);
       setDispositions(disp.mapping || {});
+      setDltList(dltRes.registrations || []);
+      setNcprJobs(ncprRes.jobs || []);
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message });
     }
@@ -132,9 +145,30 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
               <input value={workspace.name || ''} onChange={(e) => setWorkspace({ ...workspace, name: e.target.value })} placeholder="Workspace Name" className="w-full px-3 py-2 rounded-xl border border-slate-200" />
               <input value={workspace.gstin || ''} onChange={(e) => setWorkspace({ ...workspace, gstin: e.target.value })} placeholder="GSTIN (optional)" className="w-full px-3 py-2 rounded-xl border border-slate-200" />
               <input value={workspace.billing_email || ''} onChange={(e) => setWorkspace({ ...workspace, billing_email: e.target.value })} placeholder="Billing Email" className="w-full px-3 py-2 rounded-xl border border-slate-200" />
+              <div>
+                <label className="block text-[11px] font-semibold text-slate-500 mb-1">Low Balance Alert Threshold (INR)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={Math.round((workspace.low_balance_threshold_paise ?? 50000) / 100)}
+                  onChange={(e) =>
+                    setWorkspace({
+                      ...workspace,
+                      low_balance_threshold_paise: Math.max(0, Math.round(Number(e.target.value || 0) * 100)),
+                    })
+                  }
+                  placeholder="Low balance alert threshold (INR)"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                />
+              </div>
               <button
                 onClick={async () => {
-                  await trivaanaApi.updateWorkspace({ name: workspace.name, gstin: workspace.gstin, billing_email: workspace.billing_email });
+                  await trivaanaApi.updateWorkspace({
+                    name: workspace.name,
+                    gstin: workspace.gstin,
+                    billing_email: workspace.billing_email,
+                    low_balance_threshold_paise: workspace.low_balance_threshold_paise,
+                  });
                   setFeedback({ type: 'success', message: 'Workspace settings saved.' });
                 }}
                 className="px-4 py-2 rounded-xl bg-orange-600 text-white font-bold cursor-pointer"
@@ -168,6 +202,10 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
                 <span>Allow Promotional Calling (requires 140-series registration)</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" checked={Boolean(policy.require_dlt_for_promotional)} onChange={(e) => setPolicy({ ...policy, require_dlt_for_promotional: e.target.checked })} />
+                <span>Require Approved DLT PE/Header for Promotional Calls</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" checked={alertPrefs.liveCallBanner} onChange={(e) => setAlertPrefs({ ...alertPrefs, liveCallBanner: e.target.checked })} />
                 <span>Show Live-Call Activity Popover Notifications</span>
               </label>
@@ -178,6 +216,7 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
                     calling_window_end: policy.calling_window_end,
                     enforce_dnd_scrubbing: Boolean(policy.enforce_dnd_scrubbing),
                     allow_promotional_calls: Boolean(policy.allow_promotional_calls),
+                    require_dlt_for_promotional: Boolean(policy.require_dlt_for_promotional),
                   });
                   setFeedback({ type: 'success', message: 'Compliance & alert policy updated.' });
                 }}
@@ -279,7 +318,22 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
                     <div className="font-bold text-slate-900">{m.full_name || m.email}</div>
                     <div className="text-[11px] text-slate-500">{m.email}</div>
                   </div>
-                  <span className="px-2 py-0.5 rounded-full bg-slate-200 text-[10px] font-bold uppercase">{m.role} • {m.status}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="px-2 py-0.5 rounded-full bg-slate-200 text-[10px] font-bold uppercase">{m.role} • {m.status}</span>
+                    {m.role !== 'owner' && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          await trivaanaApi.removeMember(m.id);
+                          setFeedback({ type: 'success', message: `Removed member ${m.email}.` });
+                          loadAll();
+                        }}
+                        className="px-2 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-[10px] cursor-pointer"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
@@ -346,6 +400,81 @@ export const SettingsPanel: React.FC<SettingsPanelProps> = ({ initialTab = 'gene
                 <span className="text-slate-500">{entry.reason || 'Suppressed'}</span>
               </div>
             ))}
+          </div>
+
+          <div className="pt-4 border-t border-slate-100 grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-slate-900">TRAI DLT PE/TM &amp; Template Registry ({dltList.length})</h3>
+              <div className="grid grid-cols-2 gap-2">
+                <input placeholder="Entity Name" value={dltForm.entity_name} onChange={(e) => setDltForm({ ...dltForm, entity_name: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
+                <input placeholder="Principal Entity ID (PE ID)" value={dltForm.pe_id} onChange={(e) => setDltForm({ ...dltForm, pe_id: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
+                <input placeholder="Header ID (e.g. ACMERL)" value={dltForm.header_id} onChange={(e) => setDltForm({ ...dltForm, header_id: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
+                <input placeholder="Template ID (optional)" value={dltForm.template_id} onChange={(e) => setDltForm({ ...dltForm, template_id: e.target.value })} className="px-3 py-2 rounded-xl border border-slate-200" />
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!dltForm.entity_name || !dltForm.pe_id || !dltForm.header_id) return;
+                  await trivaanaApi.registerDltEntity(dltForm);
+                  setDltForm({ entity_name: '', pe_id: '', tm_id: '', header_id: '', template_id: '', template_name: '', call_category: 'promotional' });
+                  setFeedback({ type: 'success', message: 'DLT registration submitted for staff verification.' });
+                  loadAll();
+                }}
+                className="px-4 py-2 rounded-xl bg-slate-900 text-white font-bold cursor-pointer"
+              >
+                Submit DLT Registration
+              </button>
+              <div className="space-y-1.5">
+                {dltList.map((d: any) => (
+                  <div key={d.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex justify-between items-center">
+                    <div>
+                      <span className="font-bold text-slate-900">{d.header_id}</span> · <span>{d.entity_name}</span>
+                      <span className="text-slate-500 ml-1">(PE: {d.pe_id})</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-white border border-slate-200 font-bold text-[10px] uppercase">{d.status}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <h3 className="text-sm font-bold text-slate-900">NCPR / DND Scrubbing ({ncprJobs.length} runs)</h3>
+              <textarea
+                rows={2}
+                placeholder="Optional comma-separated phones to scrub (+9198..., +9199...) or leave blank to scrub all workspace leads"
+                value={ncprPhonesInput}
+                onChange={(e) => setNcprPhonesInput(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200"
+              />
+              <button
+                type="button"
+                onClick={async () => {
+                  const list = ncprPhonesInput
+                    .split(/[\s,]+/)
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  const res = await trivaanaApi.runNcprScrub(list);
+                  setLastNcprResult(res);
+                  loadAll();
+                }}
+                className="px-4 py-2 rounded-xl bg-orange-600 text-white font-bold cursor-pointer"
+              >
+                Run NCPR Scrub
+              </button>
+              {lastNcprResult && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 font-semibold">
+                  Eligible: {lastNcprResult.eligible_count} / {lastNcprResult.total_checked} · Blocked: {lastNcprResult.blocked_count} ({lastNcprResult.provider_mode})
+                </div>
+              )}
+              <div className="space-y-1.5">
+                {ncprJobs.slice(0, 5).map((j: any) => (
+                  <div key={j.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex justify-between">
+                    <span>{j.id} · {j.provider_mode}</span>
+                    <span className="font-bold">{j.eligible_count}/{j.total_checked} eligible</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div className="pt-4 border-t border-slate-200 space-y-3">

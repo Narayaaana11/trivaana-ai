@@ -183,7 +183,7 @@ export const VoiceBroadcastPanel: React.FC = () => {
                         if (!file) return;
                         try {
                           const res = await trivaanaApi.uploadBroadcastCsv(b.id, file);
-                          setFeedback({ type: 'success', message: `Added ${res.added_count} CSV recipient(s) to ${b.name}.` });
+                          setFeedback({ type: 'success', message: `Added ${res.added ?? res.added_count ?? 0} CSV recipient(s) to ${b.name}.` });
                           loadBroadcasts();
                         } catch (err: any) {
                           setFeedback({ type: 'error', message: err.message });

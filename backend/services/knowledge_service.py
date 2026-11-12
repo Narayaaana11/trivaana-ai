@@ -134,8 +134,25 @@ def cosine_similarity(a: List[float], b: List[float]) -> float:
 def extract_text_from_bytes(filename: str, content: bytes) -> str:
     lower = (filename or "").lower()
     if lower.endswith(".docx"):
-        with zipfile.ZipFile(io.BytesIO(content)) as zf:
-            xml_bytes = zf.read("word/document.xml")
+        max_xml_bytes = 20 * 1024 * 1024
+        max_total_bytes = 50 * 1024 * 1024
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                total_uncompressed = sum(info.file_size for info in zf.infolist())
+                if total_uncompressed > max_total_bytes:
+                    raise ValueError("DOCX archive exceeds safe uncompressed size limit")
+                try:
+                    doc_info = zf.getinfo("word/document.xml")
+                except KeyError:
+                    raise ValueError("Invalid DOCX file: missing word/document.xml")
+                if doc_info.file_size > max_xml_bytes:
+                    raise ValueError("DOCX document XML exceeds safe size limit")
+                with zf.open(doc_info) as doc_stream:
+                    xml_bytes = doc_stream.read(max_xml_bytes + 1)
+                if len(xml_bytes) > max_xml_bytes:
+                    raise ValueError("DOCX uncompressed stream exceeds safe size limit")
+        except zipfile.BadZipFile:
+            raise ValueError("Corrupt or invalid .docx archive")
         root = ET.fromstring(xml_bytes)
         texts = [elem.text for elem in root.iter() if elem.text]
         return clean_text(" ".join(texts))
@@ -167,18 +184,19 @@ def extract_text_from_bytes(filename: str, content: bytes) -> str:
 
 def extract_text_from_url(url: str) -> str:
     from urllib.parse import urljoin
-    from services.webhook_service import is_safe_public_url
+    from services.webhook_service import safe_http_request
 
     current_url = (url or "").strip()
     for _ in range(4):
-        if not is_safe_public_url(current_url):
+        try:
+            resp = safe_http_request(
+                "GET",
+                current_url,
+                timeout=10.0,
+                headers={"User-Agent": "TrivaanaAI-KB-Crawler/1.0"},
+            )
+        except ValueError:
             raise ValueError("URL blocked by SSRF security policy: must be a public HTTP/HTTPS host")
-        resp = httpx.get(
-            current_url,
-            timeout=10.0,
-            follow_redirects=False,
-            headers={"User-Agent": "TrivaanaAI-KB-Crawler/1.0"},
-        )
         if resp.is_redirect or resp.is_permanent_redirect:
             loc = resp.headers.get("location")
             if not loc:
@@ -186,7 +204,16 @@ def extract_text_from_url(url: str) -> str:
             current_url = urljoin(current_url, loc)
             continue
         resp.raise_for_status()
-        html = resp.text
+        content_type = (resp.headers.get("content-type") or "text/html").split(";")[0].strip().lower()
+        if content_type and not (
+            content_type.startswith("text/")
+            or content_type in ("application/json", "application/xml", "application/xhtml+xml")
+        ):
+            raise ValueError(f"Unsupported content type '{content_type}' for URL ingestion")
+        max_bytes = 2 * 1024 * 1024
+        if len(resp.content or b"") > max_bytes:
+            raise ValueError("URL response exceeds 2MB ingestion limit")
+        html = resp.text[:max_bytes]
         html = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.S | re.I)
         text = re.sub(r"<[^>]+>", " ", html)
         return clean_text(text)

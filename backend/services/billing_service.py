@@ -87,6 +87,23 @@ class BillingService:
         }
 
     @staticmethod
+    def get_agent_call_rate(conn: sqlite3.Connection, agent_id: Optional[str]) -> Dict[str, int]:
+        """Resolve per-minute call rate (standard vs premium voice tier) and rounding increment."""
+        catalog = BillingService.get_pricing_catalog(conn)
+        tariffs = catalog["tariffs"]
+        increment_seconds = int(catalog["billing_rules"]["rounding_increment_seconds"])
+        rate_paise = int(tariffs["standard_ai_call_paise_per_min"])
+
+        if agent_id:
+            cur = conn.cursor()
+            cur.execute("SELECT provider FROM agents WHERE id = ?", (agent_id,))
+            ag = cur.fetchone()
+            if ag and (ag["provider"] or "").lower() in ("elevenlabs", "openai"):
+                rate_paise = int(tariffs["premium_ai_call_paise_per_min"])
+
+        return {"rate_paise_per_min": rate_paise, "increment_seconds": increment_seconds}
+
+    @staticmethod
     def _record_invoice(
         conn: sqlite3.Connection,
         tenant_id: str,
@@ -97,7 +114,10 @@ class BillingService:
         cur = conn.cursor()
         cur.execute("SELECT name, gstin FROM tenants WHERE id = ?", (tenant_id,))
         t = cur.fetchone()
-        subtotal = int(round(total_paise / 1.18))
+        catalog = BillingService.get_pricing_catalog(conn)
+        gst_pct = float(catalog["billing_rules"].get("gst_percentage", 18.0))
+        divisor = 1.0 + (gst_pct / 100.0)
+        subtotal = int(round(total_paise / divisor))
         gst = total_paise - subtotal
         now = datetime.now(timezone.utc).isoformat()
         cur.execute(
@@ -105,7 +125,7 @@ class BillingService:
             INSERT OR IGNORE INTO invoices (
                 id, tenant_id, invoice_number, subtotal_paise, gst_paise, total_paise,
                 gst_percentage, sac_code, status, line_items_json, billing_name, billing_gstin, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 18.0, '998313', 'paid', ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, '998313', 'paid', ?, ?, ?, ?)
             """,
             (
                 f"inv_{uuid.uuid4().hex[:8]}",
@@ -114,6 +134,7 @@ class BillingService:
                 subtotal,
                 gst,
                 total_paise,
+                gst_pct,
                 json.dumps([{"description": description, "amount_paise": total_paise}]),
                 t["name"] if t else "",
                 t["gstin"] if t and "gstin" in t.keys() else "",
@@ -153,10 +174,13 @@ class BillingService:
         UPDATE tenants
         SET wallet_balance_paise = wallet_balance_paise + ?
         WHERE id = ?
+        RETURNING wallet_balance_paise
         """, (amount_paise, tenant_id))
 
-        cur.execute("SELECT wallet_balance_paise FROM tenants WHERE id = ?", (tenant_id,))
-        new_balance_paise = cur.fetchone()["wallet_balance_paise"]
+        bal_row = cur.fetchone()
+        if not bal_row:
+            raise ValueError(f"Tenant '{tenant_id}' not found")
+        new_balance_paise = bal_row["wallet_balance_paise"]
 
         cur.execute("""
         INSERT INTO transactions (id, tenant_id, type, amount_paise, description, invoice_id, running_balance_paise, idempotency_key, created_at)
@@ -184,7 +208,8 @@ class BillingService:
         amount_paise: int,
         description: str,
         idempotency_key: str,
-        invoice_id: Optional[str] = None
+        invoice_id: Optional[str] = None,
+        commit: bool = True,
     ) -> Dict[str, Any]:
         if amount_paise <= 0:
             return {"status": "zero_charge", "amount_paise": 0}
@@ -217,13 +242,14 @@ class BillingService:
         UPDATE tenants
         SET wallet_balance_paise = wallet_balance_paise - ?
         WHERE id = ? AND wallet_balance_paise >= ?
+        RETURNING wallet_balance_paise
         """, (amount_paise, tenant_id, amount_paise))
 
-        if cur.rowcount == 0:
+        bal_row = cur.fetchone()
+        if not bal_row:
             raise InsufficientBalanceError("Concurrent debit conflict or insufficient funds")
 
-        cur.execute("SELECT wallet_balance_paise FROM tenants WHERE id = ?", (tenant_id,))
-        new_balance_paise = cur.fetchone()["wallet_balance_paise"]
+        new_balance_paise = bal_row["wallet_balance_paise"]
 
         cur.execute("""
         INSERT INTO transactions (id, tenant_id, type, amount_paise, description, invoice_id, running_balance_paise, idempotency_key, created_at)
@@ -242,7 +268,8 @@ class BillingService:
                 severity="warning",
             )
 
-        conn.commit()
+        if commit:
+            conn.commit()
 
         return {
             "status": "success",

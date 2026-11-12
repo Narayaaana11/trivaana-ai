@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, get_current_user
+from core.dependencies import get_current_tenant, get_current_user, require_roles, require_scope
 from core.security import hash_api_key
 from services.ai_prompt_service import AIPromptService
 from services.audit_service import AuditService
@@ -142,7 +142,7 @@ class TestTurnRequest(BaseModel):
     lead_context: Optional[Dict[str, Any]] = None
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_scope("agents:read"))])
 def list_agents(
     status_filter: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -160,7 +160,7 @@ def list_agents(
     return {"agents": agents, "count": len(agents)}
 
 
-@router.post("/generate-prompt")
+@router.post("/generate-prompt", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def generate_prompt_preview(
     req: GeneratePromptRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -178,7 +178,7 @@ def generate_prompt_preview(
     )
 
 
-@router.get("/{agent_id}")
+@router.get("/{agent_id}", dependencies=[Depends(require_scope("agents:read"))])
 def get_agent(
     agent_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -208,7 +208,7 @@ def get_agent(
     return agent
 
 
-@router.post("")
+@router.post("", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_agent(
     req: CreateAgentRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -217,6 +217,10 @@ def create_agent(
 ):
     if req.status not in VALID_LIFECYCLE_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid lifecycle status '{req.status}'")
+    if req.post_call_webhook_url:
+        from services.webhook_service import is_safe_public_url
+        if not is_safe_public_url(req.post_call_webhook_url):
+            raise HTTPException(status_code=400, detail="Unsafe post_call_webhook_url: blocked by SSRF policy.")
 
     cur = db.cursor()
     agent_id = f"agent_{uuid.uuid4().hex[:8]}"
@@ -276,7 +280,7 @@ def create_agent(
     }
 
 
-@router.put("/{agent_id}")
+@router.put("/{agent_id}", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def update_agent(
     agent_id: str,
     req: UpdateAgentRequest,
@@ -292,6 +296,10 @@ def update_agent(
 
     if req.status is not None and req.status not in VALID_LIFECYCLE_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid lifecycle status '{req.status}'")
+    if req.post_call_webhook_url:
+        from services.webhook_service import is_safe_public_url
+        if not is_safe_public_url(req.post_call_webhook_url):
+            raise HTTPException(status_code=400, detail="Unsafe post_call_webhook_url: blocked by SSRF policy.")
 
     now = datetime.now(timezone.utc).isoformat()
     fields = []
@@ -388,7 +396,7 @@ def update_agent(
     return updated
 
 
-@router.post("/{agent_id}/lifecycle")
+@router.post("/{agent_id}/lifecycle", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def update_agent_lifecycle(
     agent_id: str,
     req: LifecycleRequest,
@@ -410,7 +418,7 @@ def update_agent_lifecycle(
     return {"status": "success", "agent_id": agent_id, "lifecycle_status": target}
 
 
-@router.post("/{agent_id}/prompt/generate")
+@router.post("/{agent_id}/prompt/generate", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def generate_prompt_for_agent(
     agent_id: str,
     req: GeneratePromptRequest,
@@ -473,7 +481,7 @@ def generate_prompt_for_agent(
     return result
 
 
-@router.get("/{agent_id}/prompt/versions")
+@router.get("/{agent_id}/prompt/versions", dependencies=[Depends(require_scope("agents:read"))])
 def list_prompt_versions(
     agent_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -492,7 +500,7 @@ def list_prompt_versions(
     return {"versions": versions, "count": len(versions)}
 
 
-@router.post("/{agent_id}/prompt/restore/{version_id}")
+@router.post("/{agent_id}/prompt/restore/{version_id}", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def restore_prompt_version(
     agent_id: str,
     version_id: str,
@@ -528,7 +536,7 @@ def restore_prompt_version(
     return {"status": "restored", "agent_id": agent_id, "restored_from_version": ver["version_number"], "new_version": next_ver}
 
 
-@router.post("/{agent_id}/test-turn")
+@router.post("/{agent_id}/test-turn", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def test_agent_conversation_turn(
     agent_id: str,
     req: TestTurnRequest,
@@ -552,7 +560,7 @@ def test_agent_conversation_turn(
     )
 
 
-@router.post("/{agent_id}/intake-secret/rotate")
+@router.post("/{agent_id}/intake-secret/rotate", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin"]))])
 def rotate_agent_intake_secret(
     agent_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -581,7 +589,7 @@ def rotate_agent_intake_secret(
     }
 
 
-@router.delete("/{agent_id}")
+@router.delete("/{agent_id}", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin"]))])
 def archive_agent_soft_delete(
     agent_id: str,
     tenant: dict = Depends(get_current_tenant),

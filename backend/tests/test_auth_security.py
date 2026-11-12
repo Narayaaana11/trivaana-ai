@@ -108,13 +108,24 @@ def test_production_jwt_secret_validation():
         )
     assert "Production startup rejected" in str(exc_info.value)
 
-    # 3. Strong 32+ character custom secret in production -> Must succeed
+    # 3. Production without ENCRYPTION_MASTER_KEY -> Must fail fast
+    with pytest.raises(ValidationError) as exc_vault:
+        Settings(
+            ENVIRONMENT="production",
+            JWT_SECRET="a-very-strong-production-secure-key-9283741827491823749812734918",
+            ENCRYPTION_MASTER_KEY="",
+        )
+    assert "ENCRYPTION_MASTER_KEY" in str(exc_vault.value)
+
+    # 4. Strong 32+ character custom JWT_SECRET & ENCRYPTION_MASTER_KEY in production -> Must succeed
     prod_settings = Settings(
         ENVIRONMENT="production",
-        JWT_SECRET="a-very-strong-production-secure-key-9283741827491823749812734918"
+        JWT_SECRET="a-very-strong-production-secure-key-9283741827491823749812734918",
+        ENCRYPTION_MASTER_KEY="a-very-strong-production-vault-key-11223344556677889900aabbccdd",
     )
     assert prod_settings.ENVIRONMENT == "production"
     assert len(prod_settings.JWT_SECRET) >= 32
+    assert len(prod_settings.ENCRYPTION_MASTER_KEY) >= 32
 
 
 def test_security_hardening_ws_subscription_ssrf_and_invites(client, demo_auth_headers, second_tenant_auth_headers):

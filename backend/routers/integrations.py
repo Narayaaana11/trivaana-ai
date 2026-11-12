@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, require_roles
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from core.config import settings
 from core.vault import decrypt_config_json, encrypt_config_json, encrypt_secret
 from services.audit_service import AuditService
@@ -76,7 +76,7 @@ class CreateWhatsAppTemplateRequest(BaseModel):
     approval_status: str = "pending_meta_approval"
 
 
-@router.get("/integrations")
+@router.get("/integrations", dependencies=[Depends(require_scope("integrations:read"))])
 def list_integrations(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -118,7 +118,7 @@ def list_integrations(
     return {"integrations": items, "count": len(items)}
 
 
-@router.post("/integrations/{provider_key}/connect")
+@router.post("/integrations/{provider_key}/connect", dependencies=[Depends(require_scope("integrations:write"))])
 def connect_integration(
     provider_key: str,
     req: ConnectIntegrationRequest,
@@ -167,7 +167,7 @@ def connect_integration(
     return {"status": "connected", "integration_id": int_id, "provider_key": provider_key}
 
 
-@router.post("/integrations/{provider_key}/disconnect")
+@router.post("/integrations/{provider_key}/disconnect", dependencies=[Depends(require_scope("integrations:write"))])
 def disconnect_integration(
     provider_key: str,
     tenant: dict = Depends(get_current_tenant),
@@ -184,7 +184,7 @@ def disconnect_integration(
     return {"status": "disconnected", "provider_key": provider_key}
 
 
-@router.post("/integrations/{provider_key}/test")
+@router.post("/integrations/{provider_key}/test", dependencies=[Depends(require_scope("integrations:write")), Depends(require_roles(["owner", "admin"]))])
 def test_integration(
     provider_key: str,
     tenant: dict = Depends(get_current_tenant),
@@ -197,6 +197,7 @@ def test_integration(
     cfg = decrypt_config_json(row["config_json"] or "{}") if row else {}
 
     env_map = {
+        "gemini": settings.has_gemini,
         "openai": settings.has_openai,
         "elevenlabs": settings.has_elevenlabs,
         "sarvam": settings.has_sarvam,
@@ -206,6 +207,8 @@ def test_integration(
         "vobiz": settings.has_vobiz,
         "twilio": settings.has_twilio,
         "whatsapp": settings.has_whatsapp,
+        "google_calendar": settings.has_google_oauth,
+        "google_sheets": settings.has_google_oauth,
     }
     is_ready = bool(env_map.get(provider_key) or cfg)
     status_str = "success" if is_ready else "not_configured"
@@ -228,7 +231,7 @@ def test_integration(
     return {"status": status_str, "configured": is_ready, "provider_key": provider_key, "message": msg}
 
 
-@router.get("/integrations/logs")
+@router.get("/integrations/logs", dependencies=[Depends(require_scope("integrations:read"))])
 def list_integration_logs(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -239,7 +242,7 @@ def list_integration_logs(
     return {"logs": logs, "count": len(logs)}
 
 
-@router.post("/integrations/logs/{log_id}/retry")
+@router.post("/integrations/logs/{log_id}/retry", dependencies=[Depends(require_scope("integrations:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def retry_integration_log(
     log_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -256,7 +259,7 @@ def retry_integration_log(
 
 
 # Webhooks
-@router.get("/webhooks")
+@router.get("/webhooks", dependencies=[Depends(require_scope("integrations:read"))])
 def list_webhooks(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -273,15 +276,18 @@ def list_webhooks(
     return {"webhooks": hooks, "count": len(hooks)}
 
 
-@router.post("/webhooks")
+@router.post("/webhooks", dependencies=[Depends(require_scope("integrations:write"))])
 def create_webhook(
     req: CreateWebhookRequest,
     tenant: dict = Depends(get_current_tenant),
     current_user: dict = Depends(require_roles(["owner", "admin"])),
     db: sqlite3.Connection = Depends(get_db),
 ):
+    from services.webhook_service import is_safe_public_url
     if not req.url.startswith(("http://", "https://")):
         raise HTTPException(status_code=400, detail="Webhook URL must start with http:// or https://")
+    if not is_safe_public_url(req.url):
+        raise HTTPException(status_code=400, detail="Webhook URL blocked by SSRF security policy: must resolve to a public host")
 
     wh_id = f"whk_{uuid.uuid4().hex[:8]}"
     secret = f"whsec_{secrets.token_hex(20)}"
@@ -299,7 +305,7 @@ def create_webhook(
     return {"status": "created", "webhook_id": wh_id, "signing_secret": secret}
 
 
-@router.post("/webhooks/{webhook_id}/rotate-secret")
+@router.post("/webhooks/{webhook_id}/rotate-secret", dependencies=[Depends(require_scope("integrations:write"))])
 def rotate_webhook_secret(
     webhook_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -319,7 +325,7 @@ def rotate_webhook_secret(
     return {"status": "rotated", "webhook_id": webhook_id, "signing_secret": new_secret}
 
 
-@router.delete("/webhooks/{webhook_id}")
+@router.delete("/webhooks/{webhook_id}", dependencies=[Depends(require_scope("integrations:write"))])
 def delete_webhook(
     webhook_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -334,7 +340,7 @@ def delete_webhook(
     return {"status": "deleted", "webhook_id": webhook_id}
 
 
-@router.get("/webhooks/deliveries")
+@router.get("/webhooks/deliveries", dependencies=[Depends(require_scope("integrations:read"))])
 def list_webhook_deliveries(
     webhook_id: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -353,7 +359,7 @@ def list_webhook_deliveries(
 
 
 # WhatsApp Templates
-@router.get("/whatsapp/templates")
+@router.get("/whatsapp/templates", dependencies=[Depends(require_scope("integrations:read"))])
 def list_whatsapp_templates(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -363,7 +369,7 @@ def list_whatsapp_templates(
     return {"templates": [dict(r) for r in cur.fetchall()]}
 
 
-@router.post("/whatsapp/templates")
+@router.post("/whatsapp/templates", dependencies=[Depends(require_scope("integrations:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_whatsapp_template(
     req: CreateWhatsAppTemplateRequest,
     tenant: dict = Depends(get_current_tenant),

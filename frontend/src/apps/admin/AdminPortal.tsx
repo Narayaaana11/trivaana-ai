@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { ShieldAlert, Power, ArrowLeft, Activity, Wallet } from 'lucide-react';
 import { SuperAdminPanel } from '@/components/dashboard/SuperAdminPanel';
 import { platformService } from '@/services/platformService';
+import { trivaanaApi } from '@/lib/trivaana-api';
 
 interface AdminPortalProps {
   isSuperAdmin: boolean;
@@ -13,6 +14,12 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ isSuperAdmin, onExitTo
   const qc = useQueryClient();
   const [killReason, setKillReason] = useState('Scheduled maintenance');
   const [killBanner, setKillBanner] = useState<string | null>(null);
+
+  const { data: overview } = useQuery({
+    queryKey: ['admin-overview'],
+    queryFn: () => trivaanaApi.getAdminOverview(),
+    enabled: isSuperAdmin,
+  });
 
   const { data: finance } = useQuery({
     queryKey: ['admin-finance-summary'],
@@ -26,13 +33,22 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ isSuperAdmin, onExitTo
     enabled: isSuperAdmin,
   });
 
+  const { data: preflight } = useQuery({
+    queryKey: ['admin-preflight'],
+    queryFn: () => platformService.adminPreflight(),
+    enabled: isSuperAdmin,
+  });
+
   const killMut = useMutation({
     mutationFn: (paused: boolean) => platformService.adminEmergencyKillSwitch(paused, killReason),
     onSuccess: (res: any) => {
       setKillBanner(`Global outbound kill switch set to: ${res.outbound_paused ? 'PAUSED' : 'ACTIVE'}`);
+      qc.invalidateQueries({ queryKey: ['admin-overview'] });
       qc.invalidateQueries({ queryKey: ['admin-providers-health'] });
     },
   });
+
+  const isOutboundPaused = Boolean(overview?.emergency_outbound_paused);
 
   if (!isSuperAdmin) {
     return (
@@ -79,9 +95,11 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ isSuperAdmin, onExitTo
               <Wallet className="w-4 h-4 text-orange-600" /> Financial Liabilities &amp; Margin
             </div>
             <div className="flex justify-between"><span>Wallet Liabilities:</span><strong>₹{((finance?.wallet_liabilities_paise || 0) / 100).toFixed(2)}</strong></div>
+            <div className="flex justify-between"><span>Purchased Credits:</span><strong>₹{((finance?.purchased_credits_paise || 0) / 100).toFixed(2)}</strong></div>
             <div className="flex justify-between"><span>Earned Usage Revenue:</span><strong>₹{((finance?.earned_usage_revenue_paise || 0) / 100).toFixed(2)}</strong></div>
             <div className="flex justify-between"><span>Promo Credits:</span><strong>₹{((finance?.promotional_credits_paise || 0) / 100).toFixed(2)}</strong></div>
             <div className="flex justify-between"><span>Provider COGS:</span><strong>₹{((finance?.provider_cogs_paise || 0) / 100).toFixed(2)}</strong></div>
+            <div className="flex justify-between border-t border-slate-100 pt-1"><span>Gross Margin:</span><strong className="text-emerald-700">₹{((finance?.gross_margin_paise || 0) / 100).toFixed(2)}</strong></div>
           </div>
 
           <div className="bg-white rounded-3xl p-5 border border-slate-200 space-y-2">
@@ -101,9 +119,21 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ isSuperAdmin, onExitTo
           </div>
 
           <div className="bg-white rounded-3xl p-5 border border-rose-200 space-y-2">
-            <div className="flex items-center gap-2 font-bold text-rose-700">
-              <Power className="w-4 h-4" /> Emergency Outbound Kill Switch
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 font-bold text-rose-700">
+                <Power className="w-4 h-4" /> Emergency Outbound Kill Switch
+              </div>
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                  isOutboundPaused ? 'bg-rose-100 text-rose-800' : 'bg-emerald-100 text-emerald-700'
+                }`}
+              >
+                {isOutboundPaused ? 'OUTBOUND PAUSED' : 'OUTBOUND ACTIVE'}
+              </span>
             </div>
+            {isOutboundPaused && overview?.emergency_pause_reason && (
+              <p className="text-[11px] text-rose-700 font-semibold">Reason: {overview.emergency_pause_reason}</p>
+            )}
             <input
               value={killReason}
               onChange={(e) => setKillReason(e.target.value)}
@@ -129,6 +159,42 @@ export const AdminPortal: React.FC<AdminPortalProps> = ({ isSuperAdmin, onExitTo
             {killBanner && <p className="text-[11px] font-semibold text-slate-700">{killBanner}</p>}
           </div>
         </div>
+
+        {preflight && (
+          <div className="bg-white rounded-3xl p-5 border border-slate-200 space-y-3 text-xs">
+            <div className="flex items-center justify-between">
+              <div className="font-bold text-sm text-slate-900">Production Deployment Preflight</div>
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                  preflight.ready_for_production ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-800'
+                }`}
+              >
+                {preflight.ready_for_production ? 'PRODUCTION READY' : 'SANDBOX / ENV ACTION NEEDED'}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+              {(preflight.checks || []).map((c: any) => (
+                <div key={c.key} className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-1">
+                  <div className="flex items-center justify-between font-bold text-slate-900">
+                    <span>{c.label}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] uppercase ${
+                        c.status === 'pass'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : c.status === 'fail'
+                            ? 'bg-rose-100 text-rose-800'
+                            : 'bg-amber-100 text-amber-800'
+                      }`}
+                    >
+                      {c.status}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-600">{c.detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <SuperAdminPanel />
       </div>

@@ -79,10 +79,12 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
   // Intake secret display
   const [rotatedSecret, setRotatedSecret] = useState<string | null>(null);
 
-  // Inline test sandbox
+  // Inline test sandbox & eval scorecard
   const [testInput, setTestInput] = useState('');
   const [testHistory, setTestHistory] = useState<Array<{ sender: 'ai' | 'caller'; text: string }>>([]);
   const [isTestingTurn, setIsTestingTurn] = useState(false);
+  const [evalReport, setEvalReport] = useState<any>(null);
+  const [isEvaluating, setIsEvaluating] = useState(false);
 
   // New agent modal
   const [showCreateModal, setShowCreateModal] = useState(Boolean(initialCreate));
@@ -114,6 +116,7 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
     setSelectedAgent(agent);
     setFormState({ ...agent });
     setRotatedSecret(null);
+    setEvalReport(null);
     setTestHistory(agent.greeting_message ? [{ sender: 'ai', text: agent.greeting_message }] : []);
     void loadAgentDetails(agent.id, agent.language);
   }, [loadAgentDetails]);
@@ -288,16 +291,30 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
     }
   };
 
+  const handleRunEvalScorecard = async () => {
+    if (!selectedAgent) return;
+    setIsEvaluating(true);
+    try {
+      const report = await trivaanaApi.evaluateAgent(selectedAgent.id);
+      setEvalReport(report);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Evaluation scorecard failed.' });
+    } finally {
+      setIsEvaluating(false);
+    }
+  };
+
   const handleSendTestTurn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgent || !testInput.trim()) return;
     const msg = testInput.trim();
     setTestInput('');
+    const priorHistory = [...testHistory];
     const nextHist = [...testHistory, { sender: 'caller' as const, text: msg }];
     setTestHistory(nextHist);
     setIsTestingTurn(true);
     try {
-      const res = await trivaanaApi.testAgentTurn(selectedAgent.id, msg, nextHist);
+      const res = await trivaanaApi.testAgentTurn(selectedAgent.id, msg, priorHistory);
       setTestHistory((prev) => [...prev, { sender: 'ai', text: res.reply }]);
     } catch (err: any) {
       setTestHistory((prev) => [...prev, { sender: 'ai', text: `Error: ${err.message}` }]);
@@ -528,6 +545,45 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                     </button>
                   </form>
                 </div>
+
+                {/* Safety & Multilingual Evaluation Scorecard */}
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <div className="font-bold text-slate-900">Safety & Multilingual Guardrail Scorecard</div>
+                      <div className="text-[11px] text-slate-500">Validates Telugu/Hindi/English routing, opt-out compliance, and human handoff</div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={isEvaluating}
+                      onClick={handleRunEvalScorecard}
+                      className="px-3.5 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold cursor-pointer disabled:opacity-60"
+                    >
+                      {isEvaluating ? 'Running Eval...' : 'Run Eval Scorecard'}
+                    </button>
+                  </div>
+                  {evalReport && (
+                    <div className="space-y-2 pt-2 border-t border-slate-100">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`px-2.5 py-0.5 rounded-full font-bold text-[11px] ${evalReport.ready_for_publish ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}`}>
+                          {evalReport.ready_for_publish ? 'Ready to Publish' : 'Needs Review'}
+                        </span>
+                        <span className="font-bold text-slate-800">{evalReport.passed}/{evalReport.total} Passed ({Math.round((evalReport.pass_rate || 0) * 100)}%)</span>
+                        <span className="text-slate-500">p95 Latency: {evalReport.p95_latency_ms}ms</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {(evalReport.results || []).map((item: any) => (
+                          <div key={item.case} className="px-2.5 py-1.5 rounded-lg bg-slate-50 border border-slate-200 flex items-center justify-between">
+                            <span className="font-mono text-[11px] text-slate-700">{item.case}</span>
+                            <span className={`font-bold text-[10px] ${item.passed ? 'text-emerald-700' : 'text-rose-700'}`}>
+                              {item.passed ? 'PASS' : 'FAIL'} ({item.detected_language})
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
 
@@ -751,6 +807,7 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                   <span className="text-[11px] text-slate-500">Click + Add Node or drag blocks, then Save Flow</span>
                 </div>
                 <AgentWorkflowCanvas
+                  key={selectedAgent.id}
                   agentName={selectedAgent.name}
                   initialGraph={(selectedAgent.structured_config as any)?.flow_graph}
                   onSaveGraph={async (graph) => {

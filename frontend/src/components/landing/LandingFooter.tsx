@@ -187,9 +187,36 @@ export const LandingFooter: React.FC<LandingFooterProps> = ({
             © 2026 {BRAND.name}. All rights reserved. Built with precision for Indian enterprises.
           </div>
           <div className="flex items-center gap-6">
-            <span>Terms of Service</span>
-            <span>Privacy Policy</span>
-            <span>DND Policy</span>
+            <a
+              href="/terms"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigatePublic?.('terms');
+              }}
+              className="hover:text-white transition-colors"
+            >
+              Terms of Service
+            </a>
+            <a
+              href="/privacy"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigatePublic?.('privacy');
+              }}
+              className="hover:text-white transition-colors"
+            >
+              Privacy Policy
+            </a>
+            <a
+              href="/dnd-policy"
+              onClick={(e) => {
+                e.preventDefault();
+                onNavigatePublic?.('dnd-policy');
+              }}
+              className="hover:text-white transition-colors"
+            >
+              DND Policy
+            </a>
             <span className="text-[#ff8547] font-medium">Made in India</span>
           </div>
         </div>

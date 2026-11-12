@@ -67,8 +67,9 @@ def seed_database(conn: sqlite3.Connection):
     _seed_platform_defaults(cur, now)
     conn.commit()
 
-    # Strictly prevent demo seeding, demo accounts, fake leads, and fake calls in production
-    if settings.ENVIRONMENT.lower() in ("production", "prod") and not settings.ALLOW_DEMO_SEEDING:
+    # Strictly prevent dummy/demo seeding (demo accounts, fake leads, fake calls)
+    # unless explicitly opted into via ALLOW_DEMO_SEEDING=true (e.g., isolated test runs).
+    if not settings.ALLOW_DEMO_SEEDING:
         return
 
     cur.execute("SELECT COUNT(*) as cnt FROM tenants WHERE id = ?", (DEMO_TENANT_ID,))

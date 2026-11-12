@@ -38,14 +38,10 @@ def _is_trusted_proxy(ip_str: str) -> bool:
 
 
 def extract_client_ip(request: Request) -> str:
-    """Resolve client IP without trusting spoofable leftmost X-Forwarded-For headers."""
+    """Resolve client IP without trusting spoofable leftmost X-Forwarded-For or unverified X-Real-IP."""
     peer_ip = request.client.host if request.client else ""
     if not _is_trusted_proxy(peer_ip):
         return peer_ip or "unknown"
-
-    real_ip = (request.headers.get("x-real-ip") or "").strip()
-    if real_ip and not _is_trusted_proxy(real_ip):
-        return real_ip
 
     xff = request.headers.get("x-forwarded-for", "")
     if xff:
@@ -55,10 +51,17 @@ def extract_client_ip(request: Request) -> str:
                 return hop
         if hops:
             return hops[-1]
+
+    real_ip = (request.headers.get("x-real-ip") or "").strip()
+    if real_ip and not _is_trusted_proxy(real_ip):
+        return real_ip
+
     return peer_ip or "unknown"
 
 
 class SlidingWindowRateLimiter:
+    _MAX_BUCKETS = 10000
+
     def __init__(self):
         self._lock = threading.Lock()
         self._buckets: Dict[str, Deque[float]] = defaultdict(deque)
@@ -97,6 +100,12 @@ class SlidingWindowRateLimiter:
         now = time.monotonic()
         cutoff = now - window_seconds
         with self._lock:
+            if key not in self._buckets and len(self._buckets) >= self._MAX_BUCKETS:
+                stale_keys = [k for k, dq in self._buckets.items() if not dq or dq[-1] < cutoff]
+                for sk in stale_keys[:1000]:
+                    self._buckets.pop(sk, None)
+                if len(self._buckets) >= self._MAX_BUCKETS:
+                    self._buckets.pop(next(iter(self._buckets)), None)
             bucket = self._buckets[key]
             while bucket and bucket[0] < cutoff:
                 bucket.popleft()
@@ -110,14 +119,20 @@ rate_limiter = SlidingWindowRateLimiter()
 
 
 def resolve_rate_limit_rule(path: str, method: str) -> Optional[Tuple[str, int, int]]:
-    if method.upper() != "POST":
-        return None
-    if path.startswith("/api/auth/login") or path.startswith("/api/auth/register"):
-        return ("auth", 30, 60)
-    if path.startswith("/api/auth/password-reset/"):
-        return ("auth_reset", 10, 60)
-    if path.startswith("/api/public/lead-intake/"):
-        return ("public_intake", 60, 60)
+    m = method.upper()
+    if m == "POST":
+        if path.startswith("/api/auth/login") or path.startswith("/api/auth/register") or path.startswith("/api/auth/accept-invite"):
+            return ("auth", 30, 60)
+        if path.startswith("/api/auth/password-reset/") or path.startswith("/api/auth/email-verification/"):
+            return ("auth_reset", 10, 60)
+        if path.startswith("/api/public/lead-intake/"):
+            return ("public_intake", 60, 60)
+        if path.startswith("/api/calls/instant"):
+            return ("calls_instant", 60, 60)
+        if path.startswith("/api/knowledge/documents/url"):
+            return ("kb_url", 20, 60)
+    if path.startswith("/api/calls/plivo-xml/") or path.startswith("/api/calls/vobiz-xml/"):
+        return ("carrier_xml", 120, 60)
     return None
 
 

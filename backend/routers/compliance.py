@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant, get_current_user, require_roles
+from core.dependencies import get_current_tenant, get_current_user, require_roles, require_scope
 from services.compliance_service import ComplianceService
 from services.call_service import normalize_phone
 from services.audit_service import AuditService
@@ -41,10 +41,11 @@ class PolicyUpdateRequest(BaseModel):
     require_explicit_consent: Optional[bool] = None
     require_recording_disclosure: Optional[bool] = None
     allow_promotional_calls: Optional[bool] = None
+    require_dlt_for_promotional: Optional[bool] = None
     approved_series_prefix: Optional[str] = None
 
 
-@router.get("/policy")
+@router.get("/policy", dependencies=[Depends(require_scope("compliance:read"))])
 def get_compliance_policy(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -60,7 +61,7 @@ def get_compliance_policy(
     }
 
 
-@router.put("/policy")
+@router.put("/policy", dependencies=[Depends(require_scope("compliance:write"))])
 def update_compliance_policy(
     req: PolicyUpdateRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -91,6 +92,9 @@ def update_compliance_policy(
     if req.allow_promotional_calls is not None:
         fields.append("allow_promotional_calls = ?")
         params.append(1 if req.allow_promotional_calls else 0)
+    if req.require_dlt_for_promotional is not None:
+        fields.append("require_dlt_for_promotional = ?")
+        params.append(1 if req.require_dlt_for_promotional else 0)
     if req.approved_series_prefix is not None:
         fields.append("approved_series_prefix = ?")
         params.append(req.approved_series_prefix)
@@ -110,7 +114,7 @@ def update_compliance_policy(
     return {"status": "success", "policy": ComplianceService.get_policy(db, tenant["id"])}
 
 
-@router.get("/consents")
+@router.get("/consents", dependencies=[Depends(require_scope("compliance:read"))])
 def list_consents(
     phone: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -128,7 +132,7 @@ def list_consents(
     return {"consents": records, "count": len(records)}
 
 
-@router.post("/consents")
+@router.post("/consents", dependencies=[Depends(require_scope("compliance:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def record_consent(
     req: ConsentRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -173,7 +177,7 @@ def record_consent(
     return {"status": "success", "consent_id": cid, "phone": norm}
 
 
-@router.get("/dnc")
+@router.get("/dnc", dependencies=[Depends(require_scope("compliance:read"))])
 def list_dnc_entries(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -184,7 +188,7 @@ def list_dnc_entries(
     return {"entries": entries, "count": len(entries)}
 
 
-@router.post("/dnc")
+@router.post("/dnc", dependencies=[Depends(require_scope("compliance:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def add_dnc_entry(
     req: DncRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -208,7 +212,7 @@ def add_dnc_entry(
     return res
 
 
-@router.delete("/dnc/{entry_id}")
+@router.delete("/dnc/{entry_id}", dependencies=[Depends(require_scope("compliance:write"))])
 def remove_dnc_entry(
     entry_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -227,7 +231,7 @@ class DispositionMapRequest(BaseModel):
     mapping: dict[str, str]
 
 
-@router.get("/dispositions")
+@router.get("/dispositions", dependencies=[Depends(require_scope("compliance:read"))])
 def get_disposition_mapping(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
@@ -236,7 +240,7 @@ def get_disposition_mapping(
     return {"tenant_id": tenant["id"], "mapping": DispositionService.get_mapping(db, tenant["id"])}
 
 
-@router.put("/dispositions")
+@router.put("/dispositions", dependencies=[Depends(require_scope("compliance:write"))])
 def update_disposition_mapping(
     req: DispositionMapRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -256,4 +260,118 @@ def update_disposition_mapping(
         commit=True,
     )
     return {"status": "updated", "mapping": saved}
+
+
+class DltRegistrationRequest(BaseModel):
+    entity_name: str
+    pe_id: str
+    tm_id: Optional[str] = None
+    header_id: str
+    template_id: Optional[str] = None
+    template_name: Optional[str] = None
+    template_content: Optional[str] = None
+    call_category: str = "promotional"
+
+
+class NcprScrubRequest(BaseModel):
+    phones: Optional[list[str]] = None
+
+
+@router.get("/dlt", dependencies=[Depends(require_scope("compliance:read"))])
+def list_dlt_registrations(
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    cur = db.cursor()
+    cur.execute(
+        "SELECT * FROM dlt_registrations WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 100",
+        (tenant["id"],),
+    )
+    items = [dict(r) for r in cur.fetchall()]
+    return {"registrations": items, "count": len(items)}
+
+
+@router.post("/dlt", dependencies=[Depends(require_scope("compliance:write")), Depends(require_roles(["owner", "admin", "operator"]))])
+def register_dlt_entity(
+    req: DltRegistrationRequest,
+    tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    if not req.entity_name.strip() or not req.pe_id.strip() or not req.header_id.strip():
+        raise HTTPException(status_code=400, detail="entity_name, pe_id, and header_id are required")
+    if req.call_category not in ("promotional", "service", "transactional", "all"):
+        raise HTTPException(status_code=400, detail="Invalid call_category")
+
+    dlt_id = f"dlt_{uuid.uuid4().hex[:8]}"
+    now = datetime.now(timezone.utc).isoformat()
+    cur = db.cursor()
+    cur.execute(
+        """
+        INSERT INTO dlt_registrations (
+            id, tenant_id, entity_name, pe_id, tm_id, header_id,
+            template_id, template_name, template_content, call_category, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_review', ?)
+        """,
+        (
+            dlt_id,
+            tenant["id"],
+            req.entity_name.strip(),
+            req.pe_id.strip(),
+            req.tm_id.strip() if req.tm_id else None,
+            req.header_id.strip().upper(),
+            req.template_id.strip() if req.template_id else None,
+            req.template_name.strip() if req.template_name else None,
+            req.template_content.strip() if req.template_content else None,
+            req.call_category,
+            now,
+        ),
+    )
+    AuditService.log_event(
+        db,
+        action="dlt.registered",
+        resource_type="dlt_registration",
+        resource_id=dlt_id,
+        tenant_id=tenant["id"],
+        actor_user_id=current_user["id"],
+        metadata={"pe_id": req.pe_id.strip(), "header_id": req.header_id.strip().upper()},
+    )
+    db.commit()
+    cur.execute("SELECT * FROM dlt_registrations WHERE id = ?", (dlt_id,))
+    return {"status": "submitted", "registration": dict(cur.fetchone())}
+
+
+@router.post("/ncpr/scrub", dependencies=[Depends(require_scope("compliance:write")), Depends(require_roles(["owner", "admin", "operator"]))])
+def run_ncpr_scrub(
+    req: NcprScrubRequest,
+    tenant: dict = Depends(get_current_tenant),
+    current_user: dict = Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    result = ComplianceService.scrub_ncpr_numbers(db, tenant["id"], req.phones)
+    AuditService.log_event(
+        db,
+        action="compliance.ncpr_scrubbed",
+        resource_type="ncpr_scrub_job",
+        resource_id=result["id"],
+        tenant_id=tenant["id"],
+        actor_user_id=current_user["id"],
+        metadata={"total_checked": result["total_checked"], "blocked_count": result["blocked_count"], "mode": result["provider_mode"]},
+        commit=True,
+    )
+    return result
+
+
+@router.get("/ncpr/jobs", dependencies=[Depends(require_scope("compliance:read"))])
+def list_ncpr_scrub_jobs(
+    tenant: dict = Depends(get_current_tenant),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    cur = db.cursor()
+    cur.execute(
+        "SELECT id, tenant_id, total_checked, blocked_count, eligible_count, provider_mode, created_at FROM ncpr_scrub_jobs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 50",
+        (tenant["id"],),
+    )
+    jobs = [dict(r) for r in cur.fetchall()]
+    return {"jobs": jobs, "count": len(jobs)}
 

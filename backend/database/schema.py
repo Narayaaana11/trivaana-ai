@@ -759,6 +759,25 @@ CREATE TABLE IF NOT EXISTS disposition_mappings (
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 
+-- Delayed / Scheduled Intake Calls Queue
+CREATE TABLE IF NOT EXISTS scheduled_calls (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    lead_id TEXT,
+    contact_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'te-IN',
+    agent_id TEXT,
+    call_category TEXT NOT NULL DEFAULT 'service',
+    is_sandbox INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending', -- 'pending', 'dispatched', 'failed'
+    call_id TEXT,
+    last_error TEXT,
+    scheduled_for TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
 -- Appointments & Slot Reservations
 CREATE TABLE IF NOT EXISTS appointments (
     id TEXT PRIMARY KEY,
@@ -778,7 +797,6 @@ CREATE TABLE IF NOT EXISTS appointments (
     notes TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE(tenant_id, scheduled_start, status),
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 
@@ -871,6 +889,54 @@ CREATE INDEX IF NOT EXISTS idx_consent_tenant_phone ON consent_records(tenant_id
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_logs(tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_caller_memory_tenant_phone ON caller_memories(tenant_id, phone);
 CREATE INDEX IF NOT EXISTS idx_notifications_tenant ON notifications(tenant_id, is_read);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_active_slot ON appointments(tenant_id, scheduled_start) WHERE status = 'scheduled';
+
+CREATE TABLE IF NOT EXISTS contact_inquiries (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    company TEXT,
+    phone TEXT,
+    plan_interest TEXT,
+    message TEXT NOT NULL,
+    source_ip TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contact_inquiries_created ON contact_inquiries(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS dlt_registrations (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    entity_name TEXT NOT NULL,
+    pe_id TEXT NOT NULL,
+    tm_id TEXT,
+    header_id TEXT NOT NULL,
+    template_id TEXT,
+    template_name TEXT,
+    template_content TEXT,
+    call_category TEXT NOT NULL DEFAULT 'promotional',
+    status TEXT NOT NULL DEFAULT 'pending_review',
+    review_notes TEXT,
+    reviewed_by TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_dlt_tenant_status ON dlt_registrations(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS ncpr_scrub_jobs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    total_checked INTEGER NOT NULL DEFAULT 0,
+    blocked_count INTEGER NOT NULL DEFAULT 0,
+    eligible_count INTEGER NOT NULL DEFAULT 0,
+    provider_mode TEXT NOT NULL DEFAULT 'local_registry',
+    results_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_ncpr_jobs_tenant ON ncpr_scrub_jobs(tenant_id, created_at DESC);
 """
 
 
@@ -1019,6 +1085,10 @@ def migrate_existing_database(conn: sqlite3.Connection):
 
     _safe_add_columns(cur, "webhooks", {
         "include_transcripts": "INTEGER NOT NULL DEFAULT 1",
+    })
+
+    _safe_add_columns(cur, "compliance_policies", {
+        "require_dlt_for_promotional": "INTEGER NOT NULL DEFAULT 0",
     })
 
     _safe_add_columns(cur, "campaign_jobs", {

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import uuid
 
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_roles, require_scope
 from services.knowledge_service import (
     KnowledgeService,
     extract_text_from_bytes,
@@ -49,7 +49,7 @@ class SearchKnowledgeRequest(BaseModel):
     top_k: int = Field(4, ge=1, le=20)
 
 
-@router.get("/sources")
+@router.get("/sources", dependencies=[Depends(require_scope("knowledge:read"))])
 def list_sources(
     agent_id: Optional[str] = None,
     tenant: dict = Depends(get_current_tenant),
@@ -67,7 +67,7 @@ def list_sources(
     return {"sources": sources, "count": len(sources)}
 
 
-@router.post("/sources")
+@router.post("/sources", dependencies=[Depends(require_scope("knowledge:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def create_source(
     req: CreateSourceRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -87,7 +87,7 @@ def create_source(
     return {"status": "success", "source_id": source_id}
 
 
-@router.get("/documents")
+@router.get("/documents", dependencies=[Depends(require_scope("knowledge:read"))])
 def list_documents(
     agent_id: Optional[str] = None,
     source_id: Optional[str] = None,
@@ -109,7 +109,7 @@ def list_documents(
     return {"documents": docs, "count": len(docs)}
 
 
-@router.post("/documents/text")
+@router.post("/documents/text", dependencies=[Depends(require_scope("knowledge:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def add_text_document(
     req: AddTextDocumentRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -128,7 +128,7 @@ def add_text_document(
     )
 
 
-@router.post("/documents/url")
+@router.post("/documents/url", dependencies=[Depends(require_scope("knowledge:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def add_url_document(
     req: AddUrlDocumentRequest,
     tenant: dict = Depends(get_current_tenant),
@@ -150,7 +150,7 @@ def add_url_document(
     )
 
 
-@router.post("/documents/upload")
+@router.post("/documents/upload", dependencies=[Depends(require_scope("knowledge:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 async def upload_knowledge_file(
     file: UploadFile = File(...),
     agent_id: Optional[str] = Form(None),
@@ -159,15 +159,26 @@ async def upload_knowledge_file(
     tenant: dict = Depends(get_current_tenant),
     db: sqlite3.Connection = Depends(get_db),
 ):
-    content = await file.read()
+    max_bytes = 10 * 1024 * 1024
+    buf = bytearray()
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        if len(buf) > max_bytes:
+            raise HTTPException(status_code=400, detail="Knowledge file exceeds maximum allowed size of 10 MB")
+    content = bytes(buf)
     if not content:
         raise HTTPException(status_code=400, detail="Knowledge document file is empty")
-    if len(content) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Knowledge file exceeds maximum allowed size of 10 MB")
     filename = file.filename or "document.txt"
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
     if ext not in ("txt", "md", "csv", "json", "pdf", "docx"):
         raise HTTPException(status_code=400, detail=f"Unsupported knowledge file extension '.{ext}'")
+    try:
+        extracted = extract_text_from_bytes(filename, content)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     stored = StorageService.save_file(
         tenant_id=tenant["id"],
         category="knowledge",
@@ -175,7 +186,6 @@ async def upload_knowledge_file(
         content=content,
         content_type=file.content_type or "application/octet-stream",
     )
-    extracted = extract_text_from_bytes(filename, content)
     res = KnowledgeService.ingest_document(
         conn=db,
         tenant_id=tenant["id"],
@@ -196,7 +206,7 @@ async def upload_knowledge_file(
     return res
 
 
-@router.delete("/documents/{doc_id}")
+@router.delete("/documents/{doc_id}", dependencies=[Depends(require_scope("knowledge:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def delete_document(
     doc_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -210,6 +220,8 @@ def delete_document(
 
     source_id = doc["source_id"]
     cur.execute("DELETE FROM knowledge_chunks WHERE document_id = ? AND tenant_id = ?", (doc_id, tenant["id"]))
+    if getattr(db, "engine_name", "sqlite") == "postgresql":
+        cur.execute("DELETE FROM knowledge_chunks_pg WHERE document_id = ? AND tenant_id = ?", (doc_id, tenant["id"]))
     cur.execute("DELETE FROM knowledge_documents WHERE id = ? AND tenant_id = ?", (doc_id, tenant["id"]))
     cur.execute(
         """
@@ -225,7 +237,7 @@ def delete_document(
     return {"status": "deleted", "document_id": doc_id}
 
 
-@router.post("/documents/{doc_id}/reindex")
+@router.post("/documents/{doc_id}/reindex", dependencies=[Depends(require_scope("knowledge:write")), Depends(require_roles(["owner", "admin", "operator"]))])
 def reindex_document(
     doc_id: str,
     tenant: dict = Depends(get_current_tenant),
@@ -242,6 +254,8 @@ def reindex_document(
         raw_text = extract_text_from_url(doc["source_url"])
 
     cur.execute("DELETE FROM knowledge_chunks WHERE document_id = ? AND tenant_id = ?", (doc_id, tenant["id"]))
+    if getattr(db, "engine_name", "sqlite") == "postgresql":
+        cur.execute("DELETE FROM knowledge_chunks_pg WHERE document_id = ? AND tenant_id = ?", (doc_id, tenant["id"]))
     cur.execute("DELETE FROM knowledge_documents WHERE id = ? AND tenant_id = ?", (doc_id, tenant["id"]))
     db.commit()
 
@@ -257,7 +271,7 @@ def reindex_document(
     )
 
 
-@router.post("/search")
+@router.post("/search", dependencies=[Depends(require_scope("knowledge:read"))])
 def search_knowledge(
     req: SearchKnowledgeRequest,
     tenant: dict = Depends(get_current_tenant),

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
-import { Agent } from '@/types/trivaana';
+import { Agent, PricingCatalog } from '@/types/trivaana';
 import { Hash, Plus, CheckCircle2, AlertCircle, Layers, ShieldCheck, PhoneCall } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
 
@@ -8,6 +8,7 @@ export const PhoneNumbersPanel: React.FC = () => {
   const [numbers, setNumbers] = useState<any[]>([]);
   const [channels, setChannels] = useState<any[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [pricing, setPricing] = useState<PricingCatalog | null>(null);
   const [phoneInput, setPhoneInput] = useState('');
   const [provider, setProvider] = useState('exotel');
   const [category, setCategory] = useState('service_140_160');
@@ -16,13 +17,15 @@ export const PhoneNumbersPanel: React.FC = () => {
 
   const loadData = async () => {
     try {
-      const [nRes, aRes] = await Promise.all([
+      const [nRes, aRes, pRes] = await Promise.all([
         trivaanaApi.getPhoneNumbers(),
         trivaanaApi.getAgents(),
+        trivaanaApi.getPricing().catch(() => null),
       ]);
       setNumbers(nRes.phone_numbers || []);
       setChannels(nRes.channels || []);
       setAgents(aRes.agents || []);
+      if (pRes) setPricing(pRes);
     } catch (err: any) {
       setFeedback({ type: 'error', message: err.message });
     }
@@ -74,17 +77,21 @@ export const PhoneNumbersPanel: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs pt-2 border-t border-[#e4e4e9]">
           <div className="p-3.5 rounded-xl bg-[#f6f6f8] border border-[#e4e4e9]">
             <div className="flex justify-between font-bold text-[#0f0f14]">
-              <span>Mobile Virtual (+91)</span>
-              <span className="text-[#ff5500] tabular-nums">₹999/mo</span>
+              <span>Virtual Number Rental (Exotel / Plivo / Vobiz)</span>
+              <span className="text-[#ff5500] tabular-nums">
+                ₹{(pricing?.tariffs?.number_rental_inr_per_month ?? 799).toLocaleString('en-IN')}/mo
+              </span>
             </div>
             <p className="text-[11px] text-[#6e6e7e] mt-1">Instant activation for Exotel, Plivo &amp; Vobiz business outreach.</p>
           </div>
           <div className="p-3.5 rounded-xl bg-[#f6f6f8] border border-[#e4e4e9]">
             <div className="flex justify-between font-bold text-[#0f0f14]">
-              <span>Business Landline / DID</span>
-              <span className="text-[#0f0f14] tabular-nums">₹1,499/mo</span>
+              <span>Concurrent Calling Channel</span>
+              <span className="text-[#0f0f14] tabular-nums">
+                ₹{(pricing?.tariffs?.channel_rental_inr_per_month ?? 649).toLocaleString('en-IN')}/mo
+              </span>
             </div>
-            <p className="text-[11px] text-[#6e6e7e] mt-1">044 / 080 / 040 / 022 regional landline with 160-series trust.</p>
+            <p className="text-[11px] text-[#6e6e7e] mt-1">044 / 080 / 040 / 022 regional landline &amp; dedicated simultaneous lines.</p>
           </div>
           <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-200 flex items-start gap-2">
             <ShieldCheck className="w-4 h-4 text-emerald-700 shrink-0 mt-0.5" />

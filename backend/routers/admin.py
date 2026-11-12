@@ -49,11 +49,17 @@ def admin_platform_overview(
     cur.execute("SELECT COUNT(*) as unresolved_errors FROM system_errors WHERE resolved = 0")
     err_cnt = cur.fetchone()["unresolved_errors"]
 
+    cur.execute("SELECT value_json FROM platform_settings WHERE key = 'emergency_outbound_pause'")
+    kill_row = cur.fetchone()
+    kill_meta = json.loads(kill_row["value_json"]) if kill_row and kill_row["value_json"] else {}
+
     return {
         "workspaces": t_stats,
         "total_users": u_count,
         "calls": c_stats,
         "unresolved_errors": err_cnt,
+        "emergency_outbound_paused": bool(kill_meta.get("paused", False)),
+        "emergency_pause_reason": kill_meta.get("reason"),
         "pricing_catalog": BillingService.get_pricing_catalog(db),
     }
 
@@ -326,4 +332,10 @@ def admin_emergency_kill_switch(
         commit=True,
     )
     return {"status": "updated", "outbound_paused": req.outbound_paused, "reason": req.reason}
+
+
+@router.get("/preflight")
+def admin_production_preflight(admin_user: dict = Depends(require_super_admin)):
+    from core.preflight import evaluate_production_preflight
+    return evaluate_production_preflight()
 

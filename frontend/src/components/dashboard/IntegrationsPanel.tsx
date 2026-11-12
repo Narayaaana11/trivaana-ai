@@ -107,27 +107,82 @@ export const IntegrationsPanel: React.FC = () => {
                 </div>
                 <p className="text-slate-500">{intItem.description}</p>
               </div>
-              <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
-                <button
-                  onClick={async () => {
-                    const res = await trivaanaApi.testIntegration(intItem.provider_key);
-                    setFeedback({ type: res.configured ? 'success' : 'error', message: res.message });
-                    loadAll();
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-800 cursor-pointer"
-                >
-                  Test Connection
-                </button>
-                <button
-                  onClick={async () => {
-                    await trivaanaApi.connectIntegration(intItem.provider_key, { enabled: true });
-                    setFeedback({ type: 'success', message: `${intItem.display_name} marked connected.` });
-                    loadAll();
-                  }}
-                  className="px-3 py-1.5 rounded-xl bg-orange-600 text-white font-bold cursor-pointer"
-                >
-                  Configure
-                </button>
+              <div className="pt-2 border-t border-slate-100 space-y-2">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await trivaanaApi.testIntegration(intItem.provider_key);
+                        setFeedback({ type: res.configured ? 'success' : 'error', message: res.message });
+                        loadAll();
+                      } catch (err: any) {
+                        setFeedback({ type: 'error', message: err.message });
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-800 cursor-pointer"
+                  >
+                    Test Connection
+                  </button>
+                </div>
+                <details className="group">
+                  <summary className="inline-block px-3 py-1.5 rounded-xl bg-orange-600 text-white font-bold cursor-pointer list-none">
+                    Configure
+                  </summary>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const form = e.currentTarget;
+                      const token = (form.elements.namedItem('credential_token') as HTMLInputElement | null)?.value?.trim();
+                      const targetId = (form.elements.namedItem('target_id') as HTMLInputElement | null)?.value?.trim();
+                      const webhookUrl = (form.elements.namedItem('webhook_url') as HTMLInputElement | null)?.value?.trim();
+                      const cfg: Record<string, any> = { enabled: true };
+                      if (token) {
+                        if (intItem.provider_key.startsWith('google')) {
+                          cfg.access_token = token;
+                        } else {
+                          cfg.api_key = token;
+                        }
+                      }
+                      if (targetId) {
+                        if (intItem.provider_key === 'google_calendar') cfg.calendar_id = targetId;
+                        else if (intItem.provider_key === 'google_sheets') cfg.spreadsheet_id = targetId;
+                        else cfg.account_id = targetId;
+                      }
+                      if (webhookUrl) cfg.webhook_url = webhookUrl;
+                      try {
+                        await trivaanaApi.connectIntegration(intItem.provider_key, cfg);
+                        setFeedback({ type: 'success', message: `${intItem.display_name} credentials encrypted & saved.` });
+                        form.reset();
+                        loadAll();
+                      } catch (err: any) {
+                        setFeedback({ type: 'error', message: err.message });
+                      }
+                    }}
+                    className="mt-2 p-2.5 rounded-xl bg-slate-50 border border-slate-200 space-y-1.5"
+                  >
+                    <input
+                      name="credential_token"
+                      type="password"
+                      placeholder={intItem.provider_key.startsWith('google') ? 'OAuth Access Token' : 'API Key / Access Token'}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px]"
+                    />
+                    <input
+                      name="target_id"
+                      type="text"
+                      placeholder={intItem.provider_key === 'google_calendar' ? 'Calendar ID (e.g. primary)' : intItem.provider_key === 'google_sheets' ? 'Spreadsheet ID' : 'Account / Phone Number ID (optional)'}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px]"
+                    />
+                    <input
+                      name="webhook_url"
+                      type="url"
+                      placeholder="Endpoint / Webhook URL (optional)"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px]"
+                    />
+                    <button type="submit" className="w-full py-1.5 rounded-lg bg-slate-900 text-white font-bold text-[11px] cursor-pointer">
+                      Save &amp; Connect
+                    </button>
+                  </form>
+                </details>
               </div>
             </div>
           </BorderGlow>

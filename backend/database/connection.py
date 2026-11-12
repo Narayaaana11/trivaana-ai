@@ -12,17 +12,25 @@ from core.config import settings
 
 
 def _translate_sqlite_params(sql: str) -> str:
-    """Translate SQLite `?` placeholders to PostgreSQL `%s` safely."""
+    """Translate SQLite `?` placeholders to PostgreSQL `%s` safely (handling escaped '' literals)."""
     out = []
     in_single = False
-    for ch in sql:
+    i = 0
+    n = len(sql)
+    while i < n:
+        ch = sql[i]
         if ch == "'":
+            if in_single and i + 1 < n and sql[i + 1] == "'":
+                out.append("''")
+                i += 2
+                continue
             in_single = not in_single
             out.append(ch)
         elif ch == "?" and not in_single:
             out.append("%s")
         else:
             out.append(ch)
+        i += 1
     translated = "".join(out)
     if re.search(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", translated, flags=re.I):
         translated = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", translated, flags=re.I)
@@ -87,6 +95,14 @@ class PostgresCompatConnection:
 
     def close(self) -> None:
         if self._release_fn is not None:
+            try:
+                self._conn.execute("SELECT set_config('app.current_tenant_id', '', false)")
+                self._conn.commit()
+            except Exception:
+                try:
+                    self._conn.rollback()
+                except Exception:
+                    pass
             self._release_fn(self._conn)
         else:
             self._conn.close()
@@ -106,9 +122,9 @@ def _get_pg_pool():
 
         pool = ConnectionPool(
             conninfo=settings.DATABASE_URL,
-            min_size=1,
-            max_size=20,
-            timeout=2.0,
+            min_size=max(1, settings.PG_POOL_MIN_SIZE),
+            max_size=max(settings.PG_POOL_MIN_SIZE, settings.PG_POOL_MAX_SIZE),
+            timeout=settings.PG_POOL_TIMEOUT,
             open=False,
             kwargs={"row_factory": dict_row, "connect_timeout": 2},
         )

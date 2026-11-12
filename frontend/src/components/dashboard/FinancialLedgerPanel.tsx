@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
-import { Transaction, Tenant } from '@/types/trivaana';
+import { Transaction, Tenant, PricingCatalog } from '@/types/trivaana';
 import { AuroraBackground, GlareHover, ClickSpark, WarmTooltip } from '@/components/reactbits';
 import confetti from 'canvas-confetti';
 import {
@@ -38,20 +38,30 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
   const [topUpAmount, setTopUpAmount] = useState<number>(1000);
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'ledger' | 'invoices' | 'billing_details'>(initialSubTab);
+  const [pricing, setPricing] = useState<PricingCatalog | null>(null);
+  const [subscriptionInfo, setSubscriptionInfo] = useState<{ plan: string; concurrency_limit: number } | null>(null);
   const [selectedInvoice, setSelectedInvoice] = useState<any | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    setActiveSubTab(initialSubTab);
+  }, [initialSubTab]);
 
   const tenantName = tenant?.name || '';
   const fetchBillingData = useCallback(async () => {
     try {
       setLoading(true);
-      const [txRes, invRes, wsRes] = await Promise.all([
+      const [txRes, invRes, wsRes, pRes, subRes] = await Promise.all([
         trivaanaApi.getTransactions(),
         trivaanaApi.getInvoices().catch(() => ({ invoices: [] })),
         trivaanaApi.getWorkspace().catch(() => null),
+        trivaanaApi.getPricing().catch(() => null),
+        trivaanaApi.getSubscription().catch(() => null),
       ]);
       setTransactions(txRes.transactions || []);
       setInvoices(invRes.invoices || []);
+      if (pRes) setPricing(pRes);
+      if (subRes) setSubscriptionInfo({ plan: subRes.plan, concurrency_limit: subRes.concurrency_limit });
       if (wsRes) {
         setWorkspaceBilling({
           name: wsRes.name || tenantName,
@@ -189,9 +199,18 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
               </div>
 
               <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 text-[11px] space-y-1 text-slate-300">
-                <div className="flex justify-between"><span>Calling Credits:</span><span className="font-mono">₹{topUpAmount.toLocaleString('en-IN')}.00</span></div>
-                <div className="flex justify-between"><span>GST (18% SAC 998313):</span><span className="font-mono">₹{(topUpAmount * 0.18).toFixed(2)}</span></div>
-                <div className="flex justify-between border-t border-slate-800 pt-1 font-bold text-white"><span>Total Payable:</span><span className="font-mono">₹{(topUpAmount * 1.18).toFixed(2)}</span></div>
+                {(() => {
+                  const gstPct = pricing?.billing_rules?.gst_percentage ?? 18;
+                  const taxableBase = topUpAmount / (1 + gstPct / 100);
+                  const gstIncluded = topUpAmount - taxableBase;
+                  return (
+                    <>
+                      <div className="flex justify-between"><span>Taxable Value (Excl. GST):</span><span className="font-mono">₹{taxableBase.toFixed(2)}</span></div>
+                      <div className="flex justify-between"><span>GST ({gstPct}% Incl. SAC 998313):</span><span className="font-mono">₹{gstIncluded.toFixed(2)}</span></div>
+                      <div className="flex justify-between border-t border-slate-800 pt-1 font-bold text-white"><span>Total Payable &amp; Credited:</span><span className="font-mono">₹{topUpAmount.toFixed(2)}</span></div>
+                    </>
+                  );
+                })()}
               </div>
 
               <ClickSpark className="w-full">
@@ -215,15 +234,17 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
             </div>
             <div className="flex justify-between text-[#525260]">
               <span>Current Plan:</span>
-              <span className="font-bold text-[#0f0f14] uppercase">{tenant?.plan || 'Growth'}</span>
+              <span className="font-bold text-[#0f0f14] uppercase">
+                {subscriptionInfo?.plan || tenant?.plan || 'Growth'} ({subscriptionInfo?.concurrency_limit || tenant?.concurrency_limit || 10} ch)
+              </span>
             </div>
             <div className="flex justify-between text-[#525260] tabular-nums">
               <span>Standard Voice Tier:</span>
-              <span className="font-semibold text-[#0f0f14]">₹5.00/min</span>
+              <span className="font-semibold text-[#0f0f14]">₹{(pricing?.tariffs?.standard_ai_call_inr_per_min ?? 6.5).toFixed(2)}/min</span>
             </div>
             <div className="flex justify-between text-[#525260] tabular-nums">
               <span>Premium Neural Tier:</span>
-              <span className="font-semibold text-[#ff5500]">₹6.80/min</span>
+              <span className="font-semibold text-[#ff5500]">₹{(pricing?.tariffs?.premium_ai_call_inr_per_min ?? 8.5).toFixed(2)}/min</span>
             </div>
             <div className="flex justify-between text-[#525260]">
               <span>Unconnected Calls:</span>
@@ -231,7 +252,47 @@ export const FinancialLedgerPanel: React.FC<FinancialLedgerPanelProps> = ({
             </div>
             <div className="flex justify-between text-[#525260]">
               <span>GST Rate:</span>
-              <span className="font-semibold text-[#0f0f14]">18% (ITC Eligible)</span>
+              <span className="font-semibold text-[#0f0f14]">{pricing?.billing_rules?.gst_percentage ?? 18}% (ITC Eligible)</span>
+            </div>
+            <div className="pt-2 border-t border-slate-100 space-y-1.5">
+              <div className="font-bold text-[#0f0f14]">Switch Concurrency Plan</div>
+              <div className="grid grid-cols-2 gap-1.5">
+                {[
+                  { id: 'payg', label: 'PAYG (2 ch)' },
+                  { id: 'starter', label: 'Starter (₹2,999)' },
+                  { id: 'growth', label: 'Growth (₹7,999)' },
+                  { id: 'enterprise', label: 'Enterprise (₹24,999)' },
+                ].map((pl) => {
+                  const activePlan = (subscriptionInfo?.plan || tenant?.plan || '').toLowerCase() === pl.id;
+                  return (
+                    <button
+                      key={pl.id}
+                      type="button"
+                      disabled={isProcessing || activePlan}
+                      onClick={async () => {
+                        setIsProcessing(true);
+                        setFeedback(null);
+                        try {
+                          const res = await trivaanaApi.updateSubscription(pl.id);
+                          setSubscriptionInfo({ plan: res.plan, concurrency_limit: res.concurrency_limit });
+                          setFeedback({ type: 'success', message: `Subscribed to ${pl.id.toUpperCase()} (${res.concurrency_limit} channels).` });
+                          await fetchBillingData();
+                          if (onBalanceUpdated) onBalanceUpdated();
+                        } catch (err: any) {
+                          setFeedback({ type: 'error', message: err.message });
+                        } finally {
+                          setIsProcessing(false);
+                        }
+                      }}
+                      className={`px-2 py-1.5 rounded-lg text-[10px] font-bold border cursor-pointer disabled:opacity-50 ${
+                        activePlan ? 'bg-slate-900 text-white border-slate-900' : 'bg-slate-50 hover:bg-orange-50 text-slate-800 border-slate-200'
+                      }`}
+                    >
+                      Activate {pl.id.charAt(0).toUpperCase() + pl.id.slice(1)}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>

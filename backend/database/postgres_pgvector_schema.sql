@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS auth_tokens (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
     token_type TEXT NOT NULL,
-    token_hash TEXT NOT NULL,
+    token_hash TEXT UNIQUE NOT NULL,
     expires_at TEXT NOT NULL,
     used_at TEXT,
     created_at TEXT NOT NULL,
@@ -80,7 +80,7 @@ CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
     name TEXT NOT NULL,
-    slug TEXT UNIQUE,
+    slug TEXT,
     intake_secret_hash TEXT,
     vertical TEXT NOT NULL DEFAULT 'Real Estate',
     business_name TEXT,
@@ -350,7 +350,7 @@ CREATE TABLE IF NOT EXISTS transactions (
 CREATE TABLE IF NOT EXISTS invoices (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
-    invoice_number TEXT NOT NULL,
+    invoice_number TEXT UNIQUE NOT NULL,
     subtotal_paise INTEGER NOT NULL,
     gst_paise INTEGER NOT NULL,
     total_paise INTEGER NOT NULL,
@@ -572,7 +572,7 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
     webhook_id TEXT NOT NULL,
     tenant_id TEXT NOT NULL,
     event_type TEXT NOT NULL,
-    idempotency_key TEXT NOT NULL,
+    idempotency_key TEXT UNIQUE NOT NULL,
     payload_json TEXT NOT NULL,
     response_status INTEGER,
     response_body TEXT,
@@ -658,7 +658,7 @@ CREATE TABLE IF NOT EXISTS do_not_call_entries (
 
 CREATE TABLE IF NOT EXISTS compliance_policies (
     id TEXT PRIMARY KEY,
-    tenant_id TEXT NOT NULL,
+    tenant_id TEXT UNIQUE NOT NULL,
     calling_window_start TEXT NOT NULL DEFAULT '10:00',
     calling_window_end TEXT NOT NULL DEFAULT '18:00',
     timezone TEXT NOT NULL DEFAULT 'Asia/Kolkata',
@@ -730,6 +730,24 @@ CREATE TABLE IF NOT EXISTS disposition_mappings (
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS scheduled_calls (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL,
+    lead_id TEXT,
+    contact_name TEXT NOT NULL,
+    phone TEXT NOT NULL,
+    language TEXT NOT NULL DEFAULT 'te-IN',
+    agent_id TEXT,
+    call_category TEXT NOT NULL DEFAULT 'service',
+    is_sandbox INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'pending',
+    call_id TEXT,
+    last_error TEXT,
+    scheduled_for TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS appointments (
     id TEXT PRIMARY KEY,
     tenant_id TEXT NOT NULL,
@@ -748,7 +766,6 @@ CREATE TABLE IF NOT EXISTS appointments (
     notes TEXT,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
-    UNIQUE(tenant_id, scheduled_start, status),
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
 );
 
@@ -836,6 +853,52 @@ CREATE INDEX IF NOT EXISTS idx_consent_tenant_phone ON consent_records(tenant_id
 CREATE INDEX IF NOT EXISTS idx_audit_tenant_date ON audit_logs(tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_caller_memory_tenant_phone ON caller_memories(tenant_id, phone);
 CREATE INDEX IF NOT EXISTS idx_notifications_tenant ON notifications(tenant_id, is_read);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_appointments_active_slot ON appointments(tenant_id, scheduled_start) WHERE status = 'scheduled';
+
+CREATE TABLE IF NOT EXISTS contact_inquiries (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    company TEXT,
+    phone TEXT,
+    plan_interest TEXT,
+    message TEXT NOT NULL,
+    source_ip TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_contact_inquiries_created ON contact_inquiries(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS dlt_registrations (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    entity_name TEXT NOT NULL,
+    pe_id TEXT NOT NULL,
+    tm_id TEXT,
+    header_id TEXT NOT NULL,
+    template_id TEXT,
+    template_name TEXT,
+    template_content TEXT,
+    call_category TEXT NOT NULL DEFAULT 'promotional',
+    status TEXT NOT NULL DEFAULT 'pending_review',
+    review_notes TEXT,
+    reviewed_by TEXT,
+    reviewed_at TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dlt_tenant_status ON dlt_registrations(tenant_id, status);
+
+CREATE TABLE IF NOT EXISTS ncpr_scrub_jobs (
+    id TEXT PRIMARY KEY,
+    tenant_id TEXT NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    total_checked INTEGER NOT NULL DEFAULT 0,
+    blocked_count INTEGER NOT NULL DEFAULT 0,
+    eligible_count INTEGER NOT NULL DEFAULT 0,
+    provider_mode TEXT NOT NULL DEFAULT 'local_registry',
+    results_json TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ncpr_jobs_tenant ON ncpr_scrub_jobs(tenant_id, created_at DESC);
 
 -- Vector RAG Knowledge Chunks (PostgreSQL + pgvector)
 CREATE TABLE IF NOT EXISTS knowledge_chunks_pg (

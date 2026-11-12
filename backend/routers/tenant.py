@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends, Query
 from typing import Any, List, Optional
 import sqlite3
 from database.connection import get_db
-from core.dependencies import get_current_tenant
+from core.dependencies import get_current_tenant, require_scope
 from core.config import settings
 
 router = APIRouter(prefix="/api", tags=["Tenant & Analytics"])
 
 
-@router.get("/tenant")
+@router.get("/tenant", dependencies=[Depends(require_scope("analytics:read"))])
 def get_tenant_details(tenant: dict = Depends(get_current_tenant)):
     paise = tenant.get("wallet_balance_paise", 0)
     return {
@@ -34,8 +34,8 @@ def get_tenant_details(tenant: dict = Depends(get_current_tenant)):
     }
 
 
-@router.get("/stats")
-@router.get("/analytics")
+@router.get("/stats", dependencies=[Depends(require_scope("analytics:read"))])
+@router.get("/analytics", dependencies=[Depends(require_scope("analytics:read"))])
 def get_tenant_stats(
     days: int = Query(30, ge=1, le=365),
     agent_id: Optional[str] = None,

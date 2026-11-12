@@ -53,6 +53,7 @@ class RealtimeVoicePipeline:
         barge_in: bool = False,
         synthesize_audio: bool = True,
         lead_context: Optional[Dict[str, Any]] = None,
+        telephony_audio: bool = False,
     ) -> Dict[str, Any]:
         t0 = time.perf_counter()
         stt_ms = 0
@@ -110,11 +111,30 @@ class RealtimeVoicePipeline:
         tts_mode = "browser_fallback"
         if synthesize_audio and getattr(tts_provider, "is_configured", False):
             try:
-                audio_out = tts_provider.synthesize_speech(
-                    text=reply_text,
-                    language=detected_lang,
-                    voice_id=agent.get("voice_id") or "meera",
-                )
+                voice_id = agent.get("voice_id") or "meera"
+                if telephony_audio and tts_provider_name == "elevenlabs":
+                    audio_out = tts_provider.synthesize_speech(
+                        text=reply_text,
+                        language=detected_lang,
+                        voice_id=voice_id,
+                        output_format="pcm_8000",
+                    )
+                elif telephony_audio and tts_provider_name == "openai":
+                    pcm_24k = tts_provider.synthesize_speech(
+                        text=reply_text,
+                        language=detected_lang,
+                        voice_id=voice_id,
+                        response_format="pcm",
+                    )
+                    audio_out = b"".join(
+                        pcm_24k[i : i + 2] for i in range(0, len(pcm_24k) - 1, 6)
+                    )
+                else:
+                    audio_out = tts_provider.synthesize_speech(
+                        text=reply_text,
+                        language=detected_lang,
+                        voice_id=voice_id,
+                    )
                 audio_b64 = base64.b64encode(audio_out).decode("ascii")
                 tts_mode = tts_provider_name
             except Exception:
@@ -153,6 +173,30 @@ class RealtimeVoicePipeline:
                 action_events.append(act_res)
             except Exception:
                 pass
+
+        if call_id and turn_res.get("action_calls"):
+            enabled_actions = {
+                a["action_type"]: a for a in (turn_res.get("available_actions") or [])
+            }
+            for ac in turn_res["action_calls"]:
+                atype = ac.get("action_type")
+                if atype in enabled_actions:
+                    try:
+                        from services.action_service import ActionService
+                        act_res = ActionService.execute_action(
+                            conn=conn,
+                            tenant_id=tenant_id,
+                            call_id=call_id,
+                            action_type=atype,
+                            action_name=ac.get("action_name") or enabled_actions[atype]["name"],
+                            arguments=dict(ac.get("arguments") or {}),
+                            agent_id=agent.get("id"),
+                            action_id=enabled_actions[atype]["id"],
+                            is_sandbox=not bool(settings.has_exotel or settings.has_twilio or settings.has_plivo),
+                        )
+                        action_events.append(act_res)
+                    except Exception:
+                        pass
 
         if call_id:
             cur = conn.cursor()

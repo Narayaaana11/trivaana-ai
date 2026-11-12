@@ -267,8 +267,10 @@ class AIPromptService:
                     f"Never do: {', '.join(never_do) if never_do else 'None'}\n"
                     f"Lead Context: {json.dumps(lead_context or {})}\n"
                     f"Grounded Knowledge Base Context (do NOT invent facts outside this):\n{kb_context}\n"
-                    f"Available Tools: {json.dumps([a['name'] + ': ' + a['description'] for a in actions])}\n"
-                    "Respond concisely as in a live phone call (max 2-3 sentences)."
+                    f"Available Tools: {json.dumps([{'name': a['name'], 'action_type': a['action_type'], 'description': a['description']} for a in actions])}\n"
+                    "Respond concisely as in a live phone call (max 2-3 sentences). "
+                    "If you should invoke an available tool right now, append one final line: "
+                    'ACTION_CALL: {"action_type": "<type>", "action_name": "<name>", "arguments": {...}}'
                 )
                 messages = [{"role": "system", "content": system_prompt}]
                 for turn in history[-10:]:
@@ -283,12 +285,29 @@ class AIPromptService:
                     trace_name="trivaana.voice_turn",
                 )
                 if llm_res:
+                    raw_text = str(llm_res["text"] or "")
+                    action_calls: List[Dict[str, Any]] = []
+                    spoken_lines: List[str] = []
+                    for ln in raw_text.splitlines():
+                        stripped = ln.strip()
+                        if stripped.startswith("ACTION_CALL:"):
+                            payload_str = stripped[len("ACTION_CALL:") :].strip()
+                            try:
+                                parsed_act = json.loads(payload_str)
+                                if isinstance(parsed_act, dict) and parsed_act.get("action_type"):
+                                    action_calls.append(parsed_act)
+                            except Exception:
+                                pass
+                        else:
+                            spoken_lines.append(ln)
+                    clean_reply = "\n".join(spoken_lines).strip() or raw_text
                     return {
-                        "reply": llm_res["text"],
+                        "reply": clean_reply,
                         "mode": llm_res["provider"],
                         "model": llm_res["model"],
                         "kb_chunks_used": kb_hits,
                         "available_actions": actions,
+                        "action_calls": action_calls,
                         "opt_out_detected": opt_out_detected,
                         "transfer_requested": transfer_detected,
                     }

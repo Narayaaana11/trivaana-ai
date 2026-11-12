@@ -1,45 +1,22 @@
-# Browser QA & MCP Recovery Report — Trivaana AI
+# Browser QA & Playwright E2E Report — Trivaana AI
 
-**Inspection Date:** 2026-11-11  
+**Inspection Date:** 2026-11-12  
 **Target URL:** `http://127.0.0.1:5173/` (Frontend Vite dev server) proxying `/api/*` -> `http://127.0.0.1:8001`  
-**Status:** **Blocked for Interactive Chromium UI (`Not tested` in live browser)**; **Passed via Programmatic Live HTTP/WebSocket E2E (`22/22`) & Vitest DOM (`6/6`)**.
+**Status:** **Passed Interactive Chromium E2E via Playwright MCP** & **Vitest DOM (`31/31` across `3` files)**.
 
 ---
 
-## 1. MCP Browser Tool Status Check (Part 3 Final Verification)
-Inspected Antigravity's `chrome_devtools` MCP runtime via the `/browser` subagent (`conversationId: 8db6d1e4-a875-425c-88f2-fe1fdc557e9e` and `c59abcd1-9ffa-4d61-926f-c0d94fef0b31`) and confirmed `C:\Users\gowri\.gemini\config\mcp_config.json` (`0 bytes`). `list_pages` reported `8` open tabs (including Outpero tabs and `http://127.0.0.1:5173/` in tab `8`), all preserved untouched.
-
-- **Available `chrome_devtools` Tools**: `click`, `close_page`, `drag`, `fill`, `get_console_message`, `handle_dialog`, `hover`, `list_pages`, `performance_analyze_insight`, `performance_stop_trace`, `press_key`, `resize_page`, `select_page`, `take_heapsnapshot`, `type_text`, `upload_file`, `get_css_styles`, `screencast_start`, `screencast_stop`.
-- **Disabled `chrome_devtools` Tools**:
-  - `new_page` (`tool new_page is not enabled for server chrome_devtools`)
-  - `navigate_page` (`tool navigate_page is not enabled for server chrome_devtools`)
-  - `take_snapshot` (`tool take_snapshot is not enabled for server chrome_devtools`)
-  - `take_screenshot`
-  - `list_console_messages`
-  - `list_network_requests`
-  - `evaluate_script`
-- **Alternative CLI/MCP Tools Checked**: `web-embedding`, `rea`, `rea-agents`, `browse`, `playwright`, `playwright-mcp`, and `rever-browser` are `NOT FOUND`.
-- **Existing Outpero Browser Session**: Strictly preserved (none of the existing tabs were modified, navigated, or closed).
-- **Host Safety Boundary**: In compliance with agent sandbox rules, we did not alter files under `C:\Users\gowri\.gemini\config\`.
-
-### How to Unblock Interactive Browser QA
-Option 1 (**Recommended**): In **Antigravity Settings -> Browser**, enable page creation/navigation/snapshot tools (`new_page`, `navigate_page`, `take_snapshot`, `take_screenshot`, `list_console_messages`, `list_network_requests`, `evaluate_script`).  
-Option 2: Merge the following into `C:\Users\gowri\.gemini\config\mcp_config.json` and reconnect MCP servers in Antigravity IDE:
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@playwright/mcp@latest"]
-    }
-  }
-}
-```
+## 1. Interactive Playwright MCP E2E Verification
+Verified live running stack (`uvicorn main:app --port 8001` + `vite --port 5173`) using Playwright MCP:
+- **Public Contact (`/contact`)**: Filled and submitted public inquiry form -> `POST /api/public/contact` returned `200 OK`, persisted to `contact_inquiries`, rendered confirmation (`Inquiry Received`, `Reference ID: inq_...`).
+- **Authentication & Customer Portal (`/contact#/home`)**: Logged in with demo credentials (`demo@trivaana.ai`), verified Mission Control workspace navigation (`Home`, `Leads`, `Conversations`, `Credits & billing`, `Numbers & channels`).
+- **Leads & Unified Activity Timeline (`#/leads`)**: Verified live `50/100` score badges and opened Contact Detail Drawer rendering `Unified Activity Timeline (1)`. Caught and fixed a real stacking-context bug (`MissionControl.tsx` `<main>` `z-10` trapping `z-50` drawer close button under `<header z-20>`), then re-verified drawer open/close cleanly on `#/leads`.
+- **Credits & Billing + Numbers (`#/billing`, `#/numbers`)**: Verified `growth (15 ch)` plan switcher, GST-inclusive breakdown (`₹847.46` + `₹152.54` = `₹1000.00`), and live tariff rates (`₹799/mo` number, `₹649/mo` channel).
+- **Super Admin (`/admin`) & Staff Portal (`/staff`)**: Verified lazy-loaded route bundles, `200 OK` across all admin/staff endpoints (`/api/admin/overview`, `/api/admin/finance/summary`, `/api/admin/providers/health`, `/api/admin/users`, `/api/staff/tickets`, `/api/staff/kyc-queue`), zero JS console errors.
 
 ---
 
-## 2. Automated Browser Substitute Checks Completed
-While live Chromium screenshots & click-through remain **Not tested**, the running frontend + backend HTTP boundary and React DOM rendering were verified after final fixes:
-- **Vitest + React Testing Library (`jsdom`)**: `6/6 passed` (`frontend/src/__tests__/components.test.tsx`) verifying `AuthModal` (Sign In, Register, Forgot Password), `AppSidebar` navigation + credits minutes estimate, `OverviewPanel` prompt builder + 14-category Templates drawer, `LeadManagementPanel` 4-way view switcher + `More filters` + interactive CSV Column Mapper modal, and `FinancialLedgerPanel` 18% GST breakdown + `Billing Details` tab.
-- **Live HTTP Proxy & WebSocket E2E Verification (`http://127.0.0.1:5173/` -> `:8001`)**: `22/22` probes passed (`5.9ms`–`119.9ms`) including root HTML (`has_root=True`), `/api/readiness`, `/api/auth/login` (`X-RateLimit-Remaining`), all `17` core dashboard `GET` endpoints (including populated migrated agents/leads/calls and `plivo`/`vobiz` integrations), warm call transfer, and live `ws://127.0.0.1:8001/api/calls/stream/{call_id}` roundtrip (`trivaana_turn`). Live ElevenLabs preview returned `200 plan_upgrade_required`.
+## 2. Automated Unit & Component Regression Checks
+- **Vitest + React Testing Library (`jsdom`)**: `31/31 passed` (`frontend/src/__tests__/portals.test.tsx`, `components.test.tsx`, `sprint_d_parity.test.tsx`).
+- **Build & Audit**: `npx tsc --noEmit`, `npm run lint` (`0` errors, `6` warnings), `npm run build`, and `npm audit --audit-level=high` (`0` vulnerabilities) all passed.
 

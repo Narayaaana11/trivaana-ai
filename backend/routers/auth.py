@@ -294,17 +294,22 @@ def update_profile(
 @router.post("/password-reset/request")
 def request_password_reset(req: PasswordResetRequest, db: sqlite3.Connection = Depends(get_db)):
     cur = db.cursor()
-    cur.execute("SELECT id, email FROM users WHERE LOWER(email) = ?", (req.email.strip().lower(),))
+    cur.execute("SELECT id, email, status FROM users WHERE LOWER(email) = ?", (req.email.strip().lower(),))
     user = cur.fetchone()
     raw_token = None
-    if user:
+    if user and (user["status"] or "active").lower() != "suspended":
         raw_token = f"rst_{secrets.token_urlsafe(24)}"
         now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
         expires = (now + timedelta(hours=1)).isoformat()
+        cur.execute(
+            "UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND token_type = 'password_reset' AND used_at IS NULL",
+            (now_iso, user["id"]),
+        )
         cur.execute("""
         INSERT INTO auth_tokens (id, user_id, token_type, token_hash, expires_at, created_at)
         VALUES (?, ?, 'password_reset', ?, ?, ?)
-        """, (f"tok_{uuid.uuid4().hex[:8]}", user["id"], hash_api_key(raw_token), expires, now.isoformat()))
+        """, (f"tok_{uuid.uuid4().hex[:8]}", user["id"], hash_api_key(raw_token), expires, now_iso))
         db.commit()
         from services.email_service import EmailService
         EmailService.send_password_reset(user["email"], raw_token)
@@ -330,11 +335,19 @@ def confirm_password_reset(req: PasswordResetConfirmRequest, db: sqlite3.Connect
     if not tok or tok["expires_at"] < now:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired password reset token")
 
+    cur.execute("SELECT status FROM users WHERE id = ?", (tok["user_id"],))
+    user_row = cur.fetchone()
+    if not user_row or (user_row["status"] or "active").lower() == "suspended":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is suspended")
+
     cur.execute(
         "UPDATE users SET hashed_password = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?",
         (hash_password(req.new_password), tok["user_id"]),
     )
-    cur.execute("UPDATE auth_tokens SET used_at = ? WHERE id = ?", (now, tok["id"]))
+    cur.execute(
+        "UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND token_type = 'password_reset' AND used_at IS NULL",
+        (now, tok["user_id"]),
+    )
     db.commit()
     return {"status": "success", "message": "Password updated successfully"}
 
@@ -347,11 +360,16 @@ def request_email_verification(
     cur = db.cursor()
     raw_token = f"ver_{secrets.token_urlsafe(24)}"
     now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     expires = (now + timedelta(hours=24)).isoformat()
+    cur.execute(
+        "UPDATE auth_tokens SET used_at = ? WHERE user_id = ? AND token_type = 'email_verify' AND used_at IS NULL",
+        (now_iso, current_user["id"]),
+    )
     cur.execute("""
     INSERT INTO auth_tokens (id, user_id, token_type, token_hash, expires_at, created_at)
     VALUES (?, ?, 'email_verify', ?, ?, ?)
-    """, (f"tok_{uuid.uuid4().hex[:8]}", current_user["id"], hash_api_key(raw_token), expires, now.isoformat()))
+    """, (f"tok_{uuid.uuid4().hex[:8]}", current_user["id"], hash_api_key(raw_token), expires, now_iso))
     db.commit()
     from services.email_service import EmailService
     email_res = EmailService.send_verification_email(current_user["email"], raw_token)
