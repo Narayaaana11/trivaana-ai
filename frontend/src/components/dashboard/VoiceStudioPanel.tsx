@@ -108,7 +108,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
   const [verifyStatus, setVerifyStatus] = useState<any>(null);
 
   const [selectedLang, setSelectedLang] = useState('te-IN');
-  const [providerFilter, setProviderFilter] = useState<'all' | 'elevenlabs' | 'sarvam'>('all');
+  const [providerFilter, setProviderFilter] = useState<'all' | 'elevenlabs' | 'sarvam'>('sarvam');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [genderFilter, setGenderFilter] = useState('');

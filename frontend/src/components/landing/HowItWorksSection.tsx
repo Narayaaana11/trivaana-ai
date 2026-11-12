@@ -171,7 +171,7 @@ export const HowItWorksSection: React.FC<HowItWorksSectionProps> = ({ onEnterDas
         audioRef.current = null;
       };
       audio.onerror = () => {
-        setAudioError(`ElevenLabs call sample (${audioUrl}) failed to load.`);
+        setAudioError(`Sarvam AI call sample (${audioUrl}) failed to load.`);
         setPlaying(false);
         audioRef.current = null;
       };
@@ -266,7 +266,7 @@ export const HowItWorksSection: React.FC<HowItWorksSectionProps> = ({ onEnterDas
                   label={playing ? 'Stop call audio' : 'Hear a live call'}
                   className="!bg-white !text-[#0f0f14]"
                 />
-                <span className="text-[10px] font-mono text-slate-400">ElevenLabs · eleven_v4_turbo</span>
+                <span className="text-[10px] font-mono text-slate-400">Sarvam AI · bulbul:v3</span>
                 {audioError && <span className="text-[11px] text-red-400 text-center">{audioError}</span>}
               </div>
             </div>

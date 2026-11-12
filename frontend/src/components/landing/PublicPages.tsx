@@ -27,12 +27,12 @@ interface PageCommonProps {
 
 /* ---------------- 1. /voices Dedicated Page ---------------- */
 const ALL_VOICES = [
-  { id: 'v1', name: 'Meera', lang: 'hi-IN', audioUrl: '/audio/how-hi-in.mp3', label: 'Hindi · ElevenLabs v4 Turbo', tier: 'Standard · ₹6.50/min', line: 'नमस्ते अमन जी! नेक्स्ट रियलिटी नोएडा से मीरा बोल रही हूँ। आपने Sector 150 में 2BHK के लिए इन्क्वायरी की थी?' },
-  { id: 'v2', name: 'Aravind', lang: 'te-IN', audioUrl: '/audio/aravind.mp3', label: 'Telugu · ElevenLabs v4 Turbo', tier: 'Balanced · ₹6.50/min', line: 'నమస్కారం! ట్రివానా ఏఐకి స్వాగతం. నేను మీ వర్చువల్ అసిస్టెంట్ని. ఈరోజు మీకు ఎలా సహాయం చేయగలను?' },
-  { id: 'v3', name: 'Priya', lang: 'hi-IN', audioUrl: '/audio/priya.mp3', label: 'Hindi · ElevenLabs v4 Turbo', tier: 'Premium · ₹8.50/min', line: 'नमस्ते! ट्रिवाना एआई में आपका स्वागत है। मैं आपकी वर्चुअल असिस्टेंट हूँ। आज मैं आपकी क्या मदद कर सकती हूँ?' },
-  { id: 'v4', name: 'Kavya', lang: 'ta-IN', audioUrl: '/audio/kavya.mp3', label: 'Tamil · ElevenLabs v4 Turbo', tier: 'Premium · ₹8.50/min', line: 'வணக்கம்! ட்ரிவானா AI-க்கு உங்களை வரவேற்கிறோம். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?' },
-  { id: 'v5', name: 'Ananya', lang: 'kn-IN', audioUrl: '/audio/how-kn-in.mp3', label: 'Kannada · ElevenLabs v4 Turbo', tier: 'Balanced · ₹6.50/min', line: 'ನಮಸ್ಕಾರ ಸ್ನೇಹಾ ಮೇಡಂ! ವೈಟ್‌ಫೀಲ್ಡ್ 2BHK ಬಗ್ಗೆ ಕರೆ ಮಾಡುತ್ತಿದ್ದೇನೆ. ಶನಿವಾರ ಸಂಜೆ 4 ಗಂಟೆಗೆ ಬರಬಹುದೇ?' },
-  { id: 'v6', name: 'Rohan', lang: 'en-IN', audioUrl: '/audio/rohan.mp3', label: 'Indian English · ElevenLabs v4 Turbo', tier: 'Balanced · ₹6.50/min', line: "Hello! Welcome to Trivaana AI. I'm your virtual assistant. How can I help you today?" },
+  { id: 'v1', name: 'Meera (Priya)', lang: 'hi-IN', audioUrl: '/audio/how-hi-in.mp3', label: 'Hindi · Sarvam AI bulbul:v3', tier: 'Sarvam · ₹6.50/min', line: 'नमस्ते अमन जी! नेक्स्ट रियलिटी नोएडा से मीरा बोल रही हूँ। आपने Sector 150 में 2BHK के लिए इन्क्वायरी की थी?' },
+  { id: 'v2', name: 'Aravind (Tarun)', lang: 'te-IN', audioUrl: '/audio/aravind.mp3', label: 'Telugu · Sarvam AI bulbul:v3', tier: 'Sarvam · ₹6.50/min', line: 'నమస్కారం! ట్రివానా ఏఐకి స్వాగతం. నేను మీ వర్చువల్ అసిస్టెంట్ని. ఈరోజు మీకు ఎలా సహాయం చేయగలను?' },
+  { id: 'v3', name: 'Priya', lang: 'hi-IN', audioUrl: '/audio/priya.mp3', label: 'Hindi · Sarvam AI bulbul:v3', tier: 'Sarvam · ₹6.50/min', line: 'नमस्ते! ट्रिवाना एआई में आपका स्वागत है। मैं आपकी वर्चुअल असिस्टेंट हूँ। आज मैं आपकी क्या मदद कर सकती हूँ?' },
+  { id: 'v4', name: 'Kavya', lang: 'ta-IN', audioUrl: '/audio/kavya.mp3', label: 'Tamil · Sarvam AI bulbul:v3', tier: 'Sarvam · ₹6.50/min', line: 'வணக்கம்! ட்ரிவானா AI-க்கு உங்களை வரவேற்கிறோம். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?' },
+  { id: 'v5', name: 'Ananya (Kavitha)', lang: 'kn-IN', audioUrl: '/audio/how-kn-in.mp3', label: 'Kannada · Sarvam AI bulbul:v3', tier: 'Sarvam · ₹6.50/min', line: 'ನಮಸ್ಕಾರ ಸ್ನೇಹಾ ಮೇಡಂ! ವೈಟ್‌ಫೀಲ್ಡ್ 2BHK ಬಗ್ಗೆ ಕರೆ ಮಾಡುತ್ತಿದ್ದೇನೆ. ಶನಿವಾರ ಸಂಜೆ 4 ಗಂಟೆಗೆ ಬರಬಹುದೇ?' },
+  { id: 'v6', name: 'Rohan', lang: 'en-IN', audioUrl: '/audio/rohan.mp3', label: 'Indian English · Sarvam AI bulbul:v3', tier: 'Sarvam · ₹6.50/min', line: "Hello! Welcome to Trivaana AI. I'm your virtual assistant. How can I help you today?" },
 ];
 
 export const PublicVoicesPage: React.FC<PageCommonProps> = ({ onEnterDashboard }) => {

@@ -914,12 +914,12 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                   <div>
                     <label className="block font-bold text-slate-700 mb-1">Voice Provider</label>
                     <select
-                      value={formState.provider || 'elevenlabs'}
+                      value={formState.provider || 'sarvam'}
                       onChange={(e) => setFormState({ ...formState, provider: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
                     >
-                      <option value="elevenlabs">ElevenLabs (Primary Neural)</option>
-                      <option value="sarvam">Sarvam AI</option>
+                      <option value="sarvam">Sarvam AI (Bulbul v3 / v4-flash)</option>
+                      <option value="elevenlabs">ElevenLabs</option>
                       <option value="openai">OpenAI TTS</option>
                       <option value="indicf5">IndicF5 Self-Hosted</option>
                     </select>

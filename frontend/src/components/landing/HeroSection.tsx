@@ -212,7 +212,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
         audioRef.current = null;
       };
       audio.onerror = () => {
-        setVoiceHint(`ElevenLabs voice sample (${audioUrl}) failed to load.`);
+        setVoiceHint(`Sarvam AI voice sample (${audioUrl}) failed to load.`);
         setIsPlayingAudio(false);
         audioRef.current = null;
       };
