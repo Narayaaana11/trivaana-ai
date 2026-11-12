@@ -113,7 +113,7 @@ class RealtimeVoicePipeline:
         if synthesize_audio and getattr(tts_provider, "is_configured", False):
             try:
                 from services.voice_ecosystem_service import VoiceSelectionService, VoiceUsageService
-                voice_id = agent.get("voice_id") or ("EXAVITQu4vr4xnSDxMaL" if tts_provider_name == "elevenlabs" else "meera")
+                voice_id = agent.get("voice_id") or ("EXAVITQu4vr4xnSDxMaL" if tts_provider_name == "elevenlabs" else "shubh")
                 if tts_provider_name == "elevenlabs":
                     selection = VoiceSelectionService.select_model_and_settings(
                         language=detected_lang,
@@ -148,6 +148,46 @@ class RealtimeVoicePipeline:
                         conn=conn,
                         tenant_id=tenant_id,
                         provider="elevenlabs",
+                        model_id=tts_model_used,
+                        voice_id=voice_id,
+                        language=detected_lang,
+                        quality_profile=selection["quality_profile"],
+                        characters_requested=len(reply_text),
+                        cache_hit=bool(tts_meta.get("cache_hit")),
+                        latency_ms=int((time.perf_counter() - t_tts) * 1000),
+                        provider_characters_reported=tts_meta.get("provider_characters_reported"),
+                        estimated_cost_paise=est_paise,
+                        agent_id=agent.get("id"),
+                        call_id=call_id,
+                    )
+                elif tts_provider_name == "sarvam":
+                    selection = VoiceSelectionService.select_sarvam_model_and_settings(
+                        language=detected_lang,
+                        quality_profile=agent.get("quality_profile") or "balanced",
+                        personality=agent.get("voice_personality") or "professional",
+                        speaker_id=voice_id,
+                        speed_override=agent.get("speech_rate"),
+                        explicit_model_id=agent.get("tts_model_id"),
+                        conn=conn,
+                    )
+                    tts_model_used = selection["model_id"]
+                    audio_out, tts_meta = tts_provider.synthesize_speech(
+                        text=reply_text,
+                        language=detected_lang,
+                        voice_id=voice_id,
+                        speed=selection["voice_settings"]["speed"],
+                        model_id=tts_model_used,
+                        output_audio_codec="linear16" if telephony_audio else "mp3",
+                        speech_sample_rate=8000 if telephony_audio else 22050,
+                        return_metadata=True,
+                    )
+                    est_paise = VoiceSelectionService.estimate_cost_paise(
+                        len(reply_text), selection.get("cost_factor", 1.0)
+                    )
+                    VoiceUsageService.record_usage(
+                        conn=conn,
+                        tenant_id=tenant_id,
+                        provider="sarvam",
                         model_id=tts_model_used,
                         voice_id=voice_id,
                         language=detected_lang,

@@ -210,6 +210,34 @@ def test_integration(
         "google_calendar": settings.has_google_oauth,
         "google_sheets": settings.has_google_oauth,
     }
+    if provider_key in ("sarvam", "elevenlabs"):
+        from providers.voice_adapters import get_voice_provider
+        vp = get_voice_provider(provider_key)
+        if hasattr(vp, "verify_credentials"):
+            vres = vp.verify_credentials(force=True) if provider_key == "sarvam" else vp.verify_credentials()
+            is_ready = bool(vres.get("connected"))
+            status_str = "success" if is_ready else "failed"
+            msg = (
+                f"{provider_key} live API verified ({vres.get('tts_models_count', 0)} TTS models)"
+                if is_ready
+                else (vres.get("reason") or f"{provider_key} live API verification failed.")
+            )
+            log_id = f"ilg_{uuid.uuid4().hex[:8]}"
+            cur.execute(
+                """
+                INSERT INTO integration_logs (id, tenant_id, integration_id, provider_key, event_name, status, response_payload_json, created_at)
+                VALUES (?, ?, ?, ?, 'connection.test', ?, ?, ?)
+                """,
+                (log_id, tenant["id"], row["id"] if row else None, provider_key, status_str, json.dumps(vres), now),
+            )
+            if row:
+                cur.execute(
+                    "UPDATE integrations SET status = ?, last_tested_at = ?, last_error = ? WHERE id = ?",
+                    ("connected" if is_ready else "error", now, None if is_ready else msg, row["id"]),
+                )
+            db.commit()
+            return {"status": status_str, "configured": is_ready, "provider_key": provider_key, "message": msg, "details": vres}
+
     is_ready = bool(env_map.get(provider_key) or cfg)
     status_str = "success" if is_ready else "not_configured"
     msg = f"{provider_key} credentials verified" if is_ready else f"{provider_key} is not configured with live credentials."

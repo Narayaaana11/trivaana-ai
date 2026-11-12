@@ -113,7 +113,10 @@ export const IntegrationsPanel: React.FC = () => {
                     onClick={async () => {
                       try {
                         const res = await trivaanaApi.testIntegration(intItem.provider_key);
-                        setFeedback({ type: res.configured ? 'success' : 'error', message: res.message });
+                        const detailSuffix = res.details?.tts_models
+                          ? ` (TTS: ${(res.details.tts_models as string[]).join(', ')}${res.details.stt_model ? `, STT: ${res.details.stt_model}` : ''})`
+                          : '';
+                        setFeedback({ type: res.configured ? 'success' : 'error', message: `${res.message}${detailSuffix}` });
                         loadAll();
                       } catch (err: any) {
                         setFeedback({ type: 'error', message: err.message });

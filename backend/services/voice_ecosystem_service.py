@@ -13,7 +13,14 @@ import sqlite3
 import uuid
 from typing import Any, Dict, List, Optional
 
-from providers.voice_adapters import SUPPORTED_LANGUAGES, get_voice_provider
+from providers.voice_adapters import (
+    SARVAM_MODELS,
+    SARVAM_V3_SPEAKER_IDS,
+    SARVAM_V4_SPEAKER_IDS,
+    SUPPORTED_LANGUAGES,
+    SarvamVoiceProvider,
+    get_voice_provider,
+)
 
 
 # Verified ElevenLabs TTS model language capabilities (also refreshed live via /v1/models)
@@ -197,16 +204,23 @@ class VoiceSelectionService:
         return (language or "en-IN").split("-")[0].strip().lower()
 
     @classmethod
-    def get_model_catalog(cls, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Dict[str, Any]]:
+    def get_model_catalog(cls, conn: Optional[sqlite3.Connection] = None, provider: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
         catalog = {}
         for k, v in DEFAULT_MODEL_SPECS.items():
             item = dict(v)
+            item["provider"] = "elevenlabs"
             item.setdefault("description", "")
             item["can_do_tts"] = True
             item["low_latency_suitable"] = item.get("latency_tier") in ("ultra_low", "low")
             item["availability_status"] = "available"
             item["experimental"] = "v3" in k
             catalog[k] = item
+        for m in SARVAM_MODELS:
+            sm = dict(m)
+            sm["low_latency_suitable"] = sm.get("latency_tier") in ("ultra_low", "low")
+            sm["availability_status"] = "available"
+            sm["experimental"] = False
+            catalog[sm["model_id"]] = sm
         if conn is not None:
             try:
                 rows = conn.execute("SELECT * FROM voice_models").fetchall()
@@ -215,7 +229,9 @@ class VoiceSelectionService:
                     can_tts = bool(r["can_do_tts"])
                     langs = json.loads(r["languages_json"] or "[]")
                     latency_tier = r["latency_tier"]
+                    prov = r["provider"] or ("sarvam" if mid.startswith("bulbul:") else "elevenlabs")
                     catalog[mid] = {
+                        "provider": prov,
                         "name": r["name"],
                         "description": r["description"] or "",
                         "can_do_tts": can_tts,
@@ -228,10 +244,13 @@ class VoiceSelectionService:
                         "max_chars_subscribed": int(r["max_chars_subscribed"] or 10000),
                         "streaming_supported": bool(r["streaming_supported"]),
                         "availability_status": "available" if can_tts else "restricted",
-                        "experimental": "v3" in mid,
+                        "experimental": prov == "elevenlabs" and "v3" in mid,
                     }
             except Exception:
                 pass
+        if provider:
+            p_low = provider.strip().lower()
+            catalog = {k: v for k, v in catalog.items() if v.get("provider") == p_low}
         return catalog
 
     @classmethod
@@ -317,6 +336,71 @@ class VoiceSelectionService:
                 "style": style,
                 "speed": speed,
                 "use_speaker_boost": bool(p_cfg["use_speaker_boost"]),
+            },
+        }
+
+    @classmethod
+    def select_sarvam_model_and_settings(
+        cls,
+        language: str = "hi-IN",
+        quality_profile: str = "balanced",
+        personality: str = "professional",
+        speaker_id: str = "shubh",
+        speed_override: Optional[float] = None,
+        explicit_model_id: Optional[str] = None,
+        conn: Optional[sqlite3.Connection] = None,
+    ) -> Dict[str, Any]:
+        # Validate language first (maps or-IN -> od-IN, rejects as-IN/ur-IN)
+        try:
+            SarvamVoiceProvider.map_language_code(language)
+        except Exception as e:
+            raise ValueError(str(e))
+
+        iso = cls.iso_from_locale(language)
+        spk = (speaker_id or "shubh").strip()
+        if spk == "meera":
+            spk = "priya"
+
+        catalog = cls.get_model_catalog(conn, provider="sarvam")
+        if explicit_model_id:
+            if explicit_model_id == "bulbul:v2":
+                raise ValueError("Sarvam 'bulbul:v2' is deprecated. Use 'bulbul:v3' or 'bulbul:v4-flash'.")
+            if explicit_model_id not in catalog:
+                raise ValueError(f"Model '{explicit_model_id}' is not a supported Sarvam TTS model.")
+            if iso not in (catalog[explicit_model_id].get("languages") or []):
+                raise ValueError(f"Sarvam model '{explicit_model_id}' does not support '{language}'.")
+            if explicit_model_id == "bulbul:v3" and spk in SARVAM_V4_SPEAKER_IDS:
+                raise ValueError(f"Speaker '{spk}' requires 'bulbul:v4-flash' and is incompatible with 'bulbul:v3'.")
+            if explicit_model_id == "bulbul:v4-flash" and spk in SARVAM_V3_SPEAKER_IDS:
+                raise ValueError(f"Speaker '{spk}' requires 'bulbul:v3' and is incompatible with 'bulbul:v4-flash'.")
+            chosen_model = explicit_model_id
+        else:
+            chosen_model = "bulbul:v4-flash" if spk in SARVAM_V4_SPEAKER_IDS else "bulbul:v3"
+            if iso not in (catalog.get(chosen_model, {}).get("languages") or []):
+                raise ValueError(f"Sarvam model '{chosen_model}' does not support '{language}'.")
+
+        p_cfg = VOICE_PERSONALITIES.get((personality or "professional").lower(), VOICE_PERSONALITIES["professional"])
+        lang_cfg = LANGUAGE_DEFAULT_TUNING.get(language, {"speed_offset": 0.0, "stability_floor": 0.48})
+        speed = speed_override if speed_override is not None else round(p_cfg["speed"] + lang_cfg["speed_offset"], 2)
+        speed = max(0.5, min(2.0, float(speed)))
+        spec = catalog.get(chosen_model, {})
+
+        return {
+            "model_id": chosen_model,
+            "model_name": spec.get("name", chosen_model),
+            "quality_profile": (quality_profile or "balanced").lower(),
+            "personality": (personality or "professional").lower(),
+            "language": language,
+            "language_iso": iso,
+            "language_supported": True,
+            "cost_factor": float(spec.get("cost_factor", 1.0)),
+            "latency_tier": spec.get("latency_tier", "low"),
+            "voice_settings": {
+                "stability": 0.55,
+                "similarity_boost": 0.80,
+                "style": 0.0,
+                "speed": speed,
+                "use_speaker_boost": True,
             },
         }
 
@@ -456,6 +540,110 @@ class VoiceSyncService:
         conn.commit()
         return {
             "synced": True,
+            "models_synced": models_synced,
+            "voices_synced": voices_synced,
+            "synced_at": now,
+        }
+
+    @staticmethod
+    def sync_sarvam_catalog(conn: sqlite3.Connection) -> Dict[str, Any]:
+        """Synchronizes verified Sarvam AI models (bulbul:v3, bulbul:v4-flash) and real male/female speakers."""
+        provider = get_voice_provider("sarvam")
+        now = datetime.now(timezone.utc).isoformat()
+        models = provider.discover_models()
+        voices = provider.discover_voices()
+
+        cur = conn.cursor()
+        models_synced = 0
+        for m in models:
+            cur.execute(
+                """
+                INSERT INTO voice_models (model_id, provider, name, description, can_do_tts, languages_json, cost_factor, max_chars_free, max_chars_subscribed, streaming_supported, latency_tier, quality_tier, synced_at)
+                VALUES (?, 'sarvam', ?, ?, 1, ?, ?, ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(model_id) DO UPDATE SET
+                    provider = 'sarvam',
+                    name = excluded.name,
+                    description = excluded.description,
+                    can_do_tts = 1,
+                    languages_json = excluded.languages_json,
+                    cost_factor = excluded.cost_factor,
+                    max_chars_free = excluded.max_chars_free,
+                    max_chars_subscribed = excluded.max_chars_subscribed,
+                    latency_tier = excluded.latency_tier,
+                    quality_tier = excluded.quality_tier,
+                    synced_at = excluded.synced_at
+                """,
+                (
+                    m["model_id"],
+                    m["name"],
+                    m["description"],
+                    json.dumps(m["languages"]),
+                    float(m["cost_factor"]),
+                    int(m["max_chars_free"]),
+                    int(m["max_chars_subscribed"]),
+                    m["latency_tier"],
+                    m["quality_tier"],
+                    now,
+                ),
+            )
+            models_synced += 1
+
+        voices_synced = 0
+        for v in voices:
+            vid = v["id"]
+            profile_id = f"vp_sv_{vid}"
+            sup_langs = v["supported_languages"]
+            primary_lang = sup_langs[0] if len(sup_langs) <= 2 else "hi-IN"
+            category = "regional_flash" if v["model_id"] == "bulbul:v4-flash" else "bulbul_v3"
+            cur.execute(
+                """
+                INSERT INTO voice_profiles (
+                    id, provider, provider_voice_id, name, language, gender, quality_tier,
+                    description, default_speed, default_stability, supports_ssml,
+                    verified_status, last_tested_at, created_at,
+                    model_id, accent, category, labels_json, supported_models_json,
+                    supported_languages_json, preview_url, access_status,
+                    default_similarity, default_style, use_speaker_boost
+                )
+                VALUES (?, 'sarvam', ?, ?, ?, ?, ?, ?, 1.0, 0.55, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 'available', 0.80, 0.0, 1)
+                ON CONFLICT(id) DO UPDATE SET
+                    name = excluded.name,
+                    language = excluded.language,
+                    gender = excluded.gender,
+                    description = excluded.description,
+                    verified_status = excluded.verified_status,
+                    model_id = excluded.model_id,
+                    accent = excluded.accent,
+                    category = excluded.category,
+                    supported_models_json = excluded.supported_models_json,
+                    supported_languages_json = excluded.supported_languages_json,
+                    access_status = 'available'
+                """,
+                (
+                    profile_id,
+                    vid,
+                    v["name"],
+                    primary_lang,
+                    v["gender"],
+                    "balanced" if v["model_id"] == "bulbul:v4-flash" else "premium",
+                    v["desc"],
+                    "verified" if provider.is_configured else "catalog_verified",
+                    now,
+                    now,
+                    v["model_id"],
+                    v["accent"],
+                    category,
+                    json.dumps({"gender": v["gender"], "accent": v["accent"], "model": v["model_id"]}),
+                    json.dumps(v["supported_models"]),
+                    json.dumps(sup_langs),
+                ),
+            )
+            voices_synced += 1
+
+        conn.commit()
+        return {
+            "synced": True,
+            "configured": provider.is_configured,
             "models_synced": models_synced,
             "voices_synced": voices_synced,
             "synced_at": now,

@@ -285,8 +285,9 @@ export const trivaanaApi = {
     return parseJsonOrThrow(res, 'Failed to fetch supported Indian languages');
   },
 
-  async getVoiceModels(): Promise<{ models: any[]; profiles: Record<string, string> }> {
-    const res = await authFetch(`${API_BASE}/voices/models`);
+  async getVoiceModels(provider?: string): Promise<{ models: any[]; profiles: Record<string, string> }> {
+    const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    const res = await authFetch(`${API_BASE}/voices/models${qs}`);
     return parseJsonOrThrow(res, 'Failed to fetch voice models');
   },
 
@@ -295,9 +296,28 @@ export const trivaanaApi = {
     return parseJsonOrThrow(res, 'Failed to fetch voice personalities');
   },
 
-  async verifyElevenLabs(): Promise<{ connected: boolean; tts_models_count?: number; reason?: string; subscription?: any }> {
-    const res = await authFetch(`${API_BASE}/voices/verify`);
-    return parseJsonOrThrow(res, 'Failed to verify ElevenLabs connection');
+  async verifyElevenLabs(provider?: string): Promise<{
+    connected: boolean;
+    provider?: string;
+    tts_models_count?: number;
+    reason?: string;
+    subscription?: any;
+    elevenlabs?: any;
+    sarvam?: any;
+  }> {
+    const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    const res = await authFetch(`${API_BASE}/voices/verify${qs}`);
+    return parseJsonOrThrow(res, 'Failed to verify voice provider connection');
+  },
+
+  async verifyVoiceProviders(provider?: string): Promise<{
+    connected: boolean;
+    provider?: string;
+    providers?: Record<string, any>;
+  }> {
+    const qs = provider ? `?provider=${encodeURIComponent(provider)}` : '';
+    const res = await authFetch(`${API_BASE}/voices/verify${qs}`);
+    return parseJsonOrThrow(res, 'Failed to verify voice providers');
   },
 
   async syncVoiceCatalog(): Promise<{ synced: boolean; models_synced: number; voices_synced: number; reason?: string }> {

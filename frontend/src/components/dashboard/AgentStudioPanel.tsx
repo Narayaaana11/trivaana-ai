@@ -958,10 +958,23 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                     <input
                       value={formState.voice_id || ''}
                       onChange={(e) => setFormState({ ...formState, voice_id: e.target.value })}
-                      placeholder="e.g. EXAVITQu4vr4xnSDxMaL or meera"
+                      placeholder="e.g. EXAVITQu4vr4xnSDxMaL or shubh / priya"
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
                     />
                   </div>
+                  {formState.provider === 'sarvam' && (
+                    <div>
+                      <label className="block font-bold text-slate-700 mb-1">Sarvam TTS Model</label>
+                      <select
+                        value={(formState as any).tts_model || 'bulbul:v3'}
+                        onChange={(e) => setFormState({ ...formState, tts_model: e.target.value } as any)}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
+                      >
+                        <option value="bulbul:v3">bulbul:v3 (Flagship 11 Indian Languages)</option>
+                        <option value="bulbul:v4-flash">bulbul:v4-flash (Low-Latency Regional)</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-3">

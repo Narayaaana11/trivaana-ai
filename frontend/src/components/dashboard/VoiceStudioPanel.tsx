@@ -108,6 +108,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
   const [verifyStatus, setVerifyStatus] = useState<any>(null);
 
   const [selectedLang, setSelectedLang] = useState('te-IN');
+  const [providerFilter, setProviderFilter] = useState<'all' | 'elevenlabs' | 'sarvam'>('all');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
   const [genderFilter, setGenderFilter] = useState('');
@@ -138,6 +139,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
       const [vRes, lRes, mRes, pRes, aRes, uRes, verRes] = await Promise.all([
         trivaanaApi.getVoices({
           language: selectedLang || undefined,
+          provider: providerFilter !== 'all' ? providerFilter : undefined,
           category: categoryFilter || undefined,
           gender: genderFilter || undefined,
           accent: accentFilter || undefined,
@@ -172,7 +174,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     } finally {
       setLoading(false);
     }
-  }, [selectedLang, categoryFilter, genderFilter, accentFilter, selectedModelId, search, favoritesOnly, selectedVoice, selectedAgentId]);
+  }, [selectedLang, providerFilter, categoryFilter, genderFilter, accentFilter, selectedModelId, search, favoritesOnly, selectedVoice, selectedAgentId]);
 
   useEffect(() => {
     loadStudio();
@@ -325,28 +327,54 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
         <div>
           <h1 className="font-display text-2xl font-extrabold text-slate-900 flex items-center gap-2">
             <Volume2 className="w-6 h-6 text-orange-600" />
-            <span>Voice Studio &amp; ElevenLabs Indian Catalog</span>
+            <span>Voice Studio &amp; Indian AI Voice Catalog</span>
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Live ElevenLabs voice discovery, 13 Indian languages, Economy/Balanced/Premium cost profiles, and AI Employee assignment.
+            Live ElevenLabs &amp; Sarvam AI (Bulbul v3 / v4-flash) voice discovery, 13 Indian languages, cost profiles, and AI Employee assignment.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {verifyStatus && (
-            <span
-              className={`px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1.5 border ${
-                verifyStatus.connected
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                  : 'bg-amber-50 text-amber-800 border-amber-200'
-              }`}
-            >
-              {verifyStatus.connected ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
-              <span>
-                {verifyStatus.connected
-                  ? `ElevenLabs Connected (${verifyStatus.tts_models_count || 0} TTS models)`
-                  : verifyStatus.reason || 'Not connected'}
+            <>
+              <span
+                className={`px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1.5 border ${
+                  (verifyStatus.elevenlabs?.connected ?? verifyStatus.connected)
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-800 border-amber-200'
+                }`}
+              >
+                {(verifyStatus.elevenlabs?.connected ?? verifyStatus.connected) ? (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                )}
+                <span>
+                  {(verifyStatus.elevenlabs?.connected ?? verifyStatus.connected)
+                    ? `ElevenLabs (${verifyStatus.elevenlabs?.tts_models_count ?? verifyStatus.tts_models_count ?? 0} models)`
+                    : verifyStatus.elevenlabs?.reason || verifyStatus.reason || 'ElevenLabs offline'}
+                </span>
               </span>
-            </span>
+              {verifyStatus.sarvam && (
+                <span
+                  className={`px-3 py-1.5 rounded-xl text-[11px] font-bold flex items-center gap-1.5 border ${
+                    verifyStatus.sarvam.connected
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                  }`}
+                >
+                  {verifyStatus.sarvam.connected ? (
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                  )}
+                  <span>
+                    {verifyStatus.sarvam.connected
+                      ? `Sarvam AI (${verifyStatus.sarvam.tts_models_count || 2} models)`
+                      : verifyStatus.sarvam.reason || 'Sarvam offline'}
+                  </span>
+                </span>
+              )}
+            </>
           )}
           <button
             type="button"
@@ -447,6 +475,26 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
           </div>
         </div>
         <div>
+          <label htmlFor="vs-provider" className="block font-bold text-slate-700 mb-1">Voice Provider</label>
+          <select
+            id="vs-provider"
+            value={providerFilter}
+            onChange={(e) => {
+              const nextProvider = e.target.value as 'all' | 'elevenlabs' | 'sarvam';
+              setProviderFilter(nextProvider);
+              setSelectedModelId('auto');
+              if (nextProvider !== 'all' && selectedVoice?.provider !== nextProvider) {
+                setSelectedVoice(null);
+              }
+            }}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+          >
+            <option value="all">All Providers</option>
+            <option value="sarvam">Sarvam AI (Bulbul v3 / v4-flash)</option>
+            <option value="elevenlabs">ElevenLabs</option>
+          </select>
+        </div>
+        <div>
           <label htmlFor="vs-category" className="block font-bold text-slate-700 mb-1">Category</label>
           <select
             id="vs-category"
@@ -491,7 +539,9 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
           </select>
         </div>
         <div>
-          <label htmlFor="vs-model" className="block font-bold text-slate-700 mb-1">ElevenLabs TTS Model</label>
+          <label htmlFor="vs-model" className="block font-bold text-slate-700 mb-1">
+            {selectedVoice?.provider === 'sarvam' || providerFilter === 'sarvam' ? 'Sarvam TTS Model' : 'TTS Model'}
+          </label>
           <select
             id="vs-model"
             value={selectedModelId}
@@ -500,12 +550,18 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
           >
             <option value="auto">Auto (By Quality Profile)</option>
             {models
-              .filter((m) => m.can_do_tts !== false && m.availability_status !== 'restricted')
+              .filter((m) => {
+                if (m.can_do_tts === false || m.availability_status === 'restricted') return false;
+                const activeProvider = providerFilter !== 'all' ? providerFilter : (selectedVoice?.provider || '');
+                if (activeProvider && m.provider && m.provider !== activeProvider) return false;
+                return true;
+              })
               .map((m) => {
                 const iso = selectedLang.split('-')[0].toLowerCase();
-                const langOk = (m.languages || []).includes(iso);
+                const langs: string[] = m.languages || [];
+                const langOk = langs.includes(iso) || langs.includes(selectedLang) || (selectedLang === 'or-IN' && langs.includes('od-IN'));
                 return (
-                  <option key={m.model_id} value={m.model_id}>
+                  <option key={`${m.provider || 'elevenlabs'}-${m.model_id}`} value={m.model_id}>
                     {m.model_id} {!langOk ? `(Unsupported for ${selectedLang})` : ''}
                   </option>
                 );

@@ -159,7 +159,9 @@ def run_worker():
         instructions = build_agent_context_instructions(metadata)
         lang = metadata.get("language", "te-IN")
         provider = str(metadata.get("provider", "sarvam")).lower()
-        voice_id = metadata.get("voice_id", "meera" if provider == "sarvam" else "alloy")
+        voice_id = metadata.get("voice_id") or ("shubh" if provider == "sarvam" else "alloy")
+        if provider == "sarvam" and voice_id == "meera":
+            voice_id = "priya"
 
         stt_engine = lk_openai.STT()
         tts_engine = lk_openai.TTS(voice=metadata.get("voice_id", "alloy"))
@@ -195,8 +197,14 @@ def run_worker():
         elif provider == "sarvam" and os.environ.get("SARVAM_API_KEY"):
             try:
                 from livekit.plugins import sarvam as lk_sarvam  # type: ignore
-                stt_engine = lk_sarvam.STT(language=lang)
-                tts_engine = lk_sarvam.TTS(target_language_code=lang, speaker=voice_id)
+                from providers.voice_adapters import SarvamVoiceProvider
+                sarvam_lang = SarvamVoiceProvider.map_language_code(lang)
+                stt_engine = lk_sarvam.STT(language=sarvam_lang, model="saaras:v4")
+                tts_engine = lk_sarvam.TTS(
+                    target_language_code=sarvam_lang,
+                    speaker=voice_id,
+                    model=metadata.get("tts_model_id") or "bulbul:v3",
+                )
             except ImportError:
                 logger.warning("livekit-plugins-sarvam not installed; falling back to OpenAI STT/TTS.")
 

@@ -21,6 +21,7 @@ from core.config import settings
 from core.dependencies import get_current_tenant, get_current_user, require_roles, require_scope
 from database.connection import get_db
 from providers.voice_adapters import (
+    SARVAM_TTS_LANGUAGES,
     SUPPORTED_LANGUAGES,
     VoiceProviderAuthError,
     VoiceProviderPlanError,
@@ -108,6 +109,7 @@ def list_supported_languages(db: sqlite3.Connection = Depends(get_db)):
             "recommended_balanced_model": VoiceSelectionService.select_model_and_settings(code, "balanced", conn=db)["model_id"],
             "recommended_economy_model": VoiceSelectionService.select_model_and_settings(code, "economy", conn=db)["model_id"],
             "recommended_premium_model": VoiceSelectionService.select_model_and_settings(code, "premium", conn=db)["model_id"],
+            "sarvam_supported": code in SARVAM_TTS_LANGUAGES,
             "tuning_notes": tuning.get("notes", ""),
             "provider_ready": bool(settings.has_elevenlabs or settings.has_sarvam or settings.has_openai or settings.has_indicf5),
         })
@@ -116,19 +118,20 @@ def list_supported_languages(db: sqlite3.Connection = Depends(get_db)):
 
 @router.get("/models", dependencies=[Depends(require_scope("agents:read"))])
 def list_voice_models(
+    provider: Optional[str] = None,
     db: sqlite3.Connection = Depends(get_db),
     tenant: dict = Depends(get_current_tenant),
 ):
-    catalog = VoiceSelectionService.get_model_catalog(db)
+    catalog = VoiceSelectionService.get_model_catalog(db, provider=provider)
     models = []
     for mid, spec in catalog.items():
         models.append({"model_id": mid, **spec})
     return {
         "models": models,
         "profiles": {
-            "economy": "Lowest cost & ultra-low latency (eleven_flash_v2_5 for en/hi/ta, eleven_v4_turbo for other Indian languages).",
-            "balanced": "Default AI Employee profile balancing naturalness, Indian pronunciation, speed, and cost (eleven_v4_turbo).",
-            "premium": "Highest fidelity & conversational expressiveness (eleven_v4 / eleven_v3_conversational).",
+            "economy": "Lowest cost & ultra-low latency (eleven_flash_v2_5 for en/hi/ta, eleven_v4_turbo for other Indian languages, or Sarvam bulbul:v4-flash).",
+            "balanced": "Default AI Employee profile balancing naturalness, Indian pronunciation, speed, and cost (eleven_v4_turbo / Sarvam bulbul:v3).",
+            "premium": "Highest fidelity & conversational expressiveness (eleven_v4 / eleven_v3_conversational / Sarvam bulbul:v3).",
         },
     }
 
@@ -143,22 +146,42 @@ def list_voice_personalities(tenant: dict = Depends(get_current_tenant)):
 
 
 @router.get("/verify", dependencies=[Depends(require_scope("agents:read"))])
-def verify_elevenlabs_connection(tenant: dict = Depends(get_current_tenant)):
-    provider = get_voice_provider("elevenlabs")
-    return provider.verify_credentials()
+def verify_voice_providers(
+    provider: Optional[str] = None,
+    tenant: dict = Depends(get_current_tenant),
+):
+    if provider == "sarvam":
+        return get_voice_provider("sarvam").verify_credentials()
+    if provider == "elevenlabs":
+        return get_voice_provider("elevenlabs").verify_credentials()
+    el = get_voice_provider("elevenlabs").verify_credentials()
+    sv = get_voice_provider("sarvam").verify_credentials()
+    return {
+        **el,
+        "elevenlabs": el,
+        "sarvam": sv,
+    }
 
 
 @router.post("/sync", dependencies=[Depends(require_scope("agents:write")), Depends(require_roles(["owner", "admin", "operator"]))])
-def sync_elevenlabs_catalog(
+def sync_voice_catalogs(
     db: sqlite3.Connection = Depends(get_db),
     tenant: dict = Depends(get_current_tenant),
 ):
     try:
-        return VoiceSyncService.sync_elevenlabs_catalog(db)
+        el_res = VoiceSyncService.sync_elevenlabs_catalog(db)
+        sv_res = VoiceSyncService.sync_sarvam_catalog(db)
+        return {
+            "synced": bool(el_res.get("synced") or sv_res.get("synced")),
+            "models_synced": int(el_res.get("models_synced", 0)) + int(sv_res.get("models_synced", 0)),
+            "voices_synced": int(el_res.get("voices_synced", 0)) + int(sv_res.get("voices_synced", 0)),
+            "elevenlabs": el_res,
+            "sarvam": sv_res,
+        }
     except VoiceProviderAuthError as e:
         raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"ElevenLabs catalog sync failed: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Voice catalog sync failed: {str(e)}")
 
 
 @router.get("", dependencies=[Depends(require_scope("agents:read"))])
@@ -302,17 +325,28 @@ def preview_voice(
     configured = getattr(provider, "is_configured", False)
 
     try:
-        selection = VoiceSelectionService.select_model_and_settings(
-            language=req.language,
-            quality_profile=req.quality_profile,
-            personality=req.personality,
-            speed_override=req.speed,
-            stability_override=req.stability,
-            similarity_override=req.similarity_boost,
-            style_override=req.style,
-            explicit_model_id=req.model_id,
-            conn=db,
-        )
+        if req.provider == "sarvam":
+            selection = VoiceSelectionService.select_sarvam_model_and_settings(
+                language=req.language,
+                quality_profile=req.quality_profile,
+                personality=req.personality,
+                speaker_id=req.voice_id,
+                speed_override=req.speed,
+                explicit_model_id=req.model_id,
+                conn=db,
+            )
+        else:
+            selection = VoiceSelectionService.select_model_and_settings(
+                language=req.language,
+                quality_profile=req.quality_profile,
+                personality=req.personality,
+                speed_override=req.speed,
+                stability_override=req.stability,
+                similarity_override=req.similarity_boost,
+                style_override=req.style,
+                explicit_model_id=req.model_id,
+                conn=db,
+            )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     est_paise = VoiceSelectionService.estimate_cost_paise(len(req.text), selection["cost_factor"])
@@ -350,7 +384,20 @@ def preview_voice(
             )
             cache_hit = bool(meta.get("cache_hit"))
             reported_chars = int(meta.get("provider_characters_reported") or len(req.text))
-        elif req.provider in ("sarvam", "openai"):
+        elif req.provider == "sarvam":
+            audio_bytes, meta = provider.synthesize_speech(
+                req.text,
+                language=req.language,
+                voice_id=req.voice_id,
+                speed=selection["voice_settings"]["speed"],
+                model_id=selection["model_id"],
+                output_audio_codec="mp3",
+                speech_sample_rate=22050,
+                return_metadata=True,
+            )
+            cache_hit = bool(meta.get("cache_hit"))
+            reported_chars = int(meta.get("provider_characters_reported") or len(req.text))
+        elif req.provider == "openai":
             audio_bytes = provider.synthesize_speech(
                 req.text,
                 language=req.language,

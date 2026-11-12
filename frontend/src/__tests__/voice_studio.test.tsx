@@ -60,9 +60,9 @@ describe('VoiceStudioPanel (ElevenLabs Multilingual Indian Catalog)', () => {
     render(<VoiceStudioPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Voice Studio & ElevenLabs Indian Catalog/i)).toBeInTheDocument();
+      expect(screen.getByText(/Voice Studio & Indian AI Voice Catalog/i)).toBeInTheDocument();
       expect(screen.getAllByText(/Sarah - Mature, Reassuring, Confident/i).length).toBeGreaterThan(0);
-      expect(screen.getByText(/ElevenLabs Connected \(9 TTS models\)/i)).toBeInTheDocument();
+      expect(screen.getByText(/ElevenLabs \(9 models\)/i)).toBeInTheDocument();
       expect(screen.getByText(/Save Voice to AI Employee/i)).toBeInTheDocument();
     });
   });
