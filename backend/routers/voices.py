@@ -4,10 +4,12 @@ Manages multi-language Indian voice catalog, live ElevenLabs sync, Economy/Balan
 model selection, calibrated speech previews, favorites, and character-level cost metering.
 """
 
+from collections import deque
 from datetime import datetime, timezone
 import base64
 import json
 import sqlite3
+import threading
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -36,12 +38,31 @@ from services.voice_ecosystem_service import (
 
 router = APIRouter(prefix="/api/voices", tags=["Voice Management"])
 
+_PREVIEW_RATE_LOCK = threading.Lock()
+_PREVIEW_RATE_BUCKETS: Dict[str, deque] = {}
+_PREVIEW_RATE_LIMIT = 40
+_PREVIEW_RATE_WINDOW_SEC = 60.0
+
+
+def _enforce_preview_rate_limit(tenant_id: str) -> None:
+    now = time.monotonic()
+    with _PREVIEW_RATE_LOCK:
+        bucket = _PREVIEW_RATE_BUCKETS.setdefault(tenant_id, deque())
+        while bucket and (now - bucket[0]) > _PREVIEW_RATE_WINDOW_SEC:
+            bucket.popleft()
+        if len(bucket) >= _PREVIEW_RATE_LIMIT:
+            raise HTTPException(
+                status_code=429,
+                detail="Voice preview rate limit exceeded (40 requests/minute). Please wait a moment and retry.",
+            )
+        bucket.append(now)
+
 
 class VoicePreviewRequest(BaseModel):
-    voice_id: str = "EXAVITQu4vr4xnSDxMaL"
+    voice_id: str = Field("EXAVITQu4vr4xnSDxMaL", min_length=1, max_length=120)
     provider: str = "elevenlabs"
     language: str = "en-IN"
-    text: str = "Namaskaram! Welcome to Trivaana AI voice calling platform."
+    text: str = Field("Namaskaram! Welcome to Trivaana AI voice calling platform.", min_length=1, max_length=1500)
     quality_profile: str = "balanced"
     personality: str = "professional"
     model_id: Optional[str] = None
@@ -276,20 +297,24 @@ def preview_voice(
     db: sqlite3.Connection = Depends(get_db),
     tenant: dict = Depends(get_current_tenant),
 ):
+    _enforce_preview_rate_limit(tenant["id"])
     provider = get_voice_provider(req.provider)
     configured = getattr(provider, "is_configured", False)
 
-    selection = VoiceSelectionService.select_model_and_settings(
-        language=req.language,
-        quality_profile=req.quality_profile,
-        personality=req.personality,
-        speed_override=req.speed,
-        stability_override=req.stability,
-        similarity_override=req.similarity_boost,
-        style_override=req.style,
-        explicit_model_id=req.model_id,
-        conn=db,
-    )
+    try:
+        selection = VoiceSelectionService.select_model_and_settings(
+            language=req.language,
+            quality_profile=req.quality_profile,
+            personality=req.personality,
+            speed_override=req.speed,
+            stability_override=req.stability,
+            similarity_override=req.similarity_boost,
+            style_override=req.style,
+            explicit_model_id=req.model_id,
+            conn=db,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     est_paise = VoiceSelectionService.estimate_cost_paise(len(req.text), selection["cost_factor"])
 
     if not configured:

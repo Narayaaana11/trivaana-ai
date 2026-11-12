@@ -303,35 +303,44 @@ class ElevenLabsVoiceProvider(BaseVoiceProvider):
         target_voice = voice_id or "EXAVITQu4vr4xnSDxMaL"  # Sarah (premade, accessible)
         chosen_model = model_id or self._resolve_default_model(language)
         cache_voice = f"{target_voice}:{chosen_model}:{round(speed, 2)}:{round(stability, 2)}:{output_format or 'mp3'}"
-        cached = _get_tts_cache().get(self.name, cache_voice, language, text)
+        cache = _get_tts_cache()
+        cached = cache.get(self.name, cache_voice, language, text)
         if cached:
             if return_metadata:
                 return cached, {"cache_hit": True, "model_id": chosen_model, "provider_characters_reported": 0}
             return cached
 
-        url = f"{self.base_url}/text-to-speech/{target_voice}"
-        if output_format:
-            url += f"?output_format={output_format}"
-        payload = self._build_tts_payload(
-            text=text,
-            language=language,
-            model_id=chosen_model,
-            stability=stability,
-            similarity_boost=similarity_boost,
-            style=style,
-            speed=speed,
-            use_speaker_boost=use_speaker_boost,
-        )
+        inflight_lock = cache.get_inflight_lock(self.name, cache_voice, language, text)
+        with inflight_lock:
+            cached = cache.get(self.name, cache_voice, language, text)
+            if cached:
+                if return_metadata:
+                    return cached, {"cache_hit": True, "model_id": chosen_model, "provider_characters_reported": 0}
+                return cached
 
-        resp = requests.post(url, headers=self._headers(json_body=True), json=payload, timeout=18.0)
-        if resp.status_code == 200:
-            _get_tts_cache().set(self.name, cache_voice, language, text, resp.content)
-            if return_metadata:
-                char_hdr = resp.headers.get("character-cost") or resp.headers.get("x-character-count")
-                reported = int(char_hdr) if char_hdr and str(char_hdr).isdigit() else len(text)
-                return resp.content, {"cache_hit": False, "model_id": chosen_model, "provider_characters_reported": reported}
-            return resp.content
-        self._handle_error_response(resp)
+            url = f"{self.base_url}/text-to-speech/{target_voice}"
+            if output_format:
+                url += f"?output_format={output_format}"
+            payload = self._build_tts_payload(
+                text=text,
+                language=language,
+                model_id=chosen_model,
+                stability=stability,
+                similarity_boost=similarity_boost,
+                style=style,
+                speed=speed,
+                use_speaker_boost=use_speaker_boost,
+            )
+
+            resp = requests.post(url, headers=self._headers(json_body=True), json=payload, timeout=18.0)
+            if resp.status_code == 200:
+                cache.set(self.name, cache_voice, language, text, resp.content)
+                if return_metadata:
+                    char_hdr = resp.headers.get("character-cost") or resp.headers.get("x-character-count")
+                    reported = int(char_hdr) if char_hdr and str(char_hdr).isdigit() else len(text)
+                    return resp.content, {"cache_hit": False, "model_id": chosen_model, "provider_characters_reported": reported}
+                return resp.content
+            self._handle_error_response(resp)
 
     def synthesize_stream(
         self,

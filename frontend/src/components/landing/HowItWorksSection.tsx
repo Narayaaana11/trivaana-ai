@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { VoicePill, StatusMark } from '@/components/reactbits';
 import { PhoneCall, CheckCircle2, Calendar, MessageSquare, Database, ArrowRight } from 'lucide-react';
 
@@ -131,23 +131,61 @@ const SCRIPT_DEMOS = [
 export const HowItWorksSection: React.FC<HowItWorksSectionProps> = ({ onEnterDashboard }) => {
   const [activeCode, setActiveCode] = useState('hi-IN');
   const [playing, setPlaying] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const activeDemo = SCRIPT_DEMOS.find((d) => d.code === activeCode) || SCRIPT_DEMOS[0];
 
+  const stopDemoAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setPlaying(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
+
   const handleHearDemo = () => {
-    if (!('speechSynthesis' in window)) return;
+    setAudioError(null);
     if (playing) {
-      window.speechSynthesis.cancel();
-      setPlaying(false);
+      stopDemoAudio();
       return;
     }
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(activeDemo.bubbles.map((b) => b.text).join(' '));
-    u.lang = activeDemo.code;
-    u.onend = () => setPlaying(false);
-    u.onerror = () => setPlaying(false);
-    setPlaying(true);
-    window.speechSynthesis.speak(u);
+    stopDemoAudio();
+    const audioUrl = `/audio/how-${activeDemo.code.toLowerCase()}.mp3`;
+    try {
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      setPlaying(true);
+      audio.onended = () => {
+        setPlaying(false);
+        audioRef.current = null;
+      };
+      audio.onerror = () => {
+        setAudioError(`ElevenLabs call sample (${audioUrl}) failed to load.`);
+        setPlaying(false);
+        audioRef.current = null;
+      };
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch((err: any) => {
+          setAudioError(err?.message || 'Unable to play call sample.');
+          setPlaying(false);
+        });
+      }
+    } catch (err: any) {
+      setAudioError(err?.message || 'Audio playback failed.');
+      setPlaying(false);
+    }
   };
 
   return (
@@ -166,8 +204,8 @@ export const HowItWorksSection: React.FC<HowItWorksSectionProps> = ({ onEnterDas
                   key={demo.code}
                   type="button"
                   onClick={() => {
-                    window.speechSynthesis?.cancel();
-                    setPlaying(false);
+                    stopDemoAudio();
+                    setAudioError(null);
                     setActiveCode(demo.code);
                   }}
                   className={`px-3.5 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all ${
@@ -221,13 +259,15 @@ export const HowItWorksSection: React.FC<HowItWorksSectionProps> = ({ onEnterDas
                 ))}
               </div>
 
-              <div className="pt-2 flex justify-center">
+              <div className="pt-2 flex flex-col items-center gap-1.5">
                 <VoicePill
                   active={playing}
                   onClick={handleHearDemo}
                   label={playing ? 'Stop call audio' : 'Hear a live call'}
                   className="!bg-white !text-[#0f0f14]"
                 />
+                <span className="text-[10px] font-mono text-slate-400">ElevenLabs · eleven_v4_turbo</span>
+                {audioError && <span className="text-[11px] text-red-400 text-center">{audioError}</span>}
               </div>
             </div>
           </div>

@@ -7,7 +7,8 @@ to eliminate repeated synthesis latency and API spend on standard greetings and 
 from collections import OrderedDict
 import hashlib
 from pathlib import Path
-from typing import Optional
+import threading
+from typing import Dict, Optional
 from core.config import settings
 
 
@@ -18,6 +19,20 @@ class TTSCache:
         self.cache_dir = Path(cache_dir or (settings.LOCAL_STORAGE_PATH / "tts_cache"))
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._mem: "OrderedDict[str, bytes]" = OrderedDict()
+        self._guard = threading.Lock()
+        self._inflight_locks: Dict[str, threading.Lock] = {}
+
+    def get_inflight_lock(self, provider: str, voice_id: str, language: str, text: str) -> threading.Lock:
+        """Deduplicate simultaneous identical TTS synthesis requests per cache key."""
+        key = self.build_key(provider, voice_id, language, text)
+        with self._guard:
+            lock = self._inflight_locks.get(key)
+            if lock is None:
+                lock = threading.Lock()
+                if len(self._inflight_locks) > 512:
+                    self._inflight_locks.clear()
+                self._inflight_locks[key] = lock
+            return lock
 
     @staticmethod
     def build_key(provider: str, voice_id: str, language: str, text: str) -> str:

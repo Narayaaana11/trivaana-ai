@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import {
   VoicePill,
@@ -27,17 +27,27 @@ interface PageCommonProps {
 
 /* ---------------- 1. /voices Dedicated Page ---------------- */
 const ALL_VOICES = [
-  { id: 'v1', name: 'Meera', lang: 'hi-IN', label: 'Hindi · Warm', tier: 'Standard · ₹6.50/min', line: 'नमस्ते जी, मैं मीरा बोल रही हूँ। आपका अपॉइंटमेंट कन्फर्म कर दूँ?' },
-  { id: 'v2', name: 'Aravind', lang: 'te-IN', label: 'Telugu · Executive', tier: 'Standard · ₹6.50/min', line: 'నమస్కారం అండి! గేటెడ్ విల్లాస్ విజిట్ శనివారం ప్లాన్ చేద్దామా?' },
-  { id: 'v3', name: 'Priya', lang: 'hi-IN', label: 'Hindi · Flash v2.5', tier: 'Premium · ₹8.50/min', line: 'नमस्ते! आपकी NEET स्कॉलरशिप टेस्ट रविवार सुबह 10 बजे है।' },
-  { id: 'v4', name: 'Kavya', lang: 'ta-IN', label: 'Tamil · Conversational', tier: 'Premium · ₹8.50/min', line: 'வணக்கம்! உங்கள் டெமோ அழைப்பை நாளை காலை உறுதி செய்யலாமா?' },
-  { id: 'v5', name: 'Ananya', lang: 'kn-IN', label: 'Kannada · Reception', tier: 'Standard · ₹6.50/min', line: 'ನಮಸ್ಕಾರ! ನಿಮಗೆ ಅನುಕೂಲವಾದ ಸಮಯವನ್ನು ದಯವಿಟ್ಟು ತಿಳಿಸಿ.' },
-  { id: 'v6', name: 'Rohan', lang: 'en-IN', label: 'Indian English · Sales', tier: 'Standard · ₹6.50/min', line: 'Hi! Calling about your test drive booking scheduled for tomorrow at 11 AM.' },
+  { id: 'v1', name: 'Meera', lang: 'hi-IN', audioUrl: '/audio/how-hi-in.mp3', label: 'Hindi · ElevenLabs v4 Turbo', tier: 'Standard · ₹6.50/min', line: 'नमस्ते अमन जी! नेक्स्ट रियलिटी नोएडा से मीरा बोल रही हूँ। आपने Sector 150 में 2BHK के लिए इन्क्वायरी की थी?' },
+  { id: 'v2', name: 'Aravind', lang: 'te-IN', audioUrl: '/audio/aravind.mp3', label: 'Telugu · ElevenLabs v4 Turbo', tier: 'Balanced · ₹6.50/min', line: 'నమస్కారం! ట్రివానా ఏఐకి స్వాగతం. నేను మీ వర్చువల్ అసిస్టెంట్ని. ఈరోజు మీకు ఎలా సహాయం చేయగలను?' },
+  { id: 'v3', name: 'Priya', lang: 'hi-IN', audioUrl: '/audio/priya.mp3', label: 'Hindi · ElevenLabs v4 Turbo', tier: 'Premium · ₹8.50/min', line: 'नमस्ते! ट्रिवाना एआई में आपका स्वागत है। मैं आपकी वर्चुअल असिस्टेंट हूँ। आज मैं आपकी क्या मदद कर सकती हूँ?' },
+  { id: 'v4', name: 'Kavya', lang: 'ta-IN', audioUrl: '/audio/kavya.mp3', label: 'Tamil · ElevenLabs v4 Turbo', tier: 'Premium · ₹8.50/min', line: 'வணக்கம்! ட்ரிவானா AI-க்கு உங்களை வரவேற்கிறோம். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?' },
+  { id: 'v5', name: 'Ananya', lang: 'kn-IN', audioUrl: '/audio/how-kn-in.mp3', label: 'Kannada · ElevenLabs v4 Turbo', tier: 'Balanced · ₹6.50/min', line: 'ನಮಸ್ಕಾರ ಸ್ನೇಹಾ ಮೇಡಂ! ವೈಟ್‌ಫೀಲ್ಡ್ 2BHK ಬಗ್ಗೆ ಕರೆ ಮಾಡುತ್ತಿದ್ದೇನೆ. ಶನಿವಾರ ಸಂಜೆ 4 ಗಂಟೆಗೆ ಬರಬಹುದೇ?' },
+  { id: 'v6', name: 'Rohan', lang: 'en-IN', audioUrl: '/audio/rohan.mp3', label: 'Indian English · ElevenLabs v4 Turbo', tier: 'Balanced · ₹6.50/min', line: "Hello! Welcome to Trivaana AI. I'm your virtual assistant. How can I help you today?" },
 ];
 
 export const PublicVoicesPage: React.FC<PageCommonProps> = ({ onEnterDashboard }) => {
   const [filterLang, setFilterLang] = useState('all');
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   const visible = ALL_VOICES.filter((v) => filterLang === 'all' || v.lang === filterLang);
 
@@ -104,17 +114,27 @@ export const PublicVoicesPage: React.FC<PageCommonProps> = ({ onEnterDashboard }
                         active={active}
                         label={active ? 'Stop sample' : 'Hear voice'}
                         onClick={() => {
-                          if (!('speechSynthesis' in window)) return;
-                          window.speechSynthesis.cancel();
+                          if (audioRef.current) {
+                            audioRef.current.pause();
+                            audioRef.current.currentTime = 0;
+                            audioRef.current = null;
+                          }
                           if (active) {
                             setPlayingId(null);
                             return;
                           }
-                          const u = new SpeechSynthesisUtterance(v.line);
-                          u.lang = v.lang;
-                          u.onend = () => setPlayingId(null);
+                          const audio = new Audio(v.audioUrl);
+                          audioRef.current = audio;
                           setPlayingId(v.id);
-                          window.speechSynthesis.speak(u);
+                          audio.onended = () => {
+                            setPlayingId(null);
+                            audioRef.current = null;
+                          };
+                          audio.onerror = () => {
+                            setPlayingId(null);
+                            audioRef.current = null;
+                          };
+                          audio.play().catch(() => setPlayingId(null));
                         }}
                       />
                       <button

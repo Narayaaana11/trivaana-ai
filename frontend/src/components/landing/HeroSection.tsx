@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   BlurText,
   GradientText,
@@ -124,6 +124,16 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [isListeningVoice, setIsListeningVoice] = useState(false);
   const [voiceHint, setVoiceHint] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+    };
+  }, []);
 
   const handleModeSwitch = (mode: 'instant' | 'bulk' | 'inbound') => {
     setSelectedMode(mode);
@@ -180,20 +190,43 @@ export const HeroSection: React.FC<HeroSectionProps> = ({
   };
 
   const handlePlayVoice = () => {
-    if (!('speechSynthesis' in window)) return;
-    if (isPlayingAudio) {
-      window.speechSynthesis.cancel();
+    setVoiceHint(null);
+    if (isPlayingAudio && audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
       setIsPlayingAudio(false);
       return;
     }
-    const text = SAMPLE_VOICE_LINES[selectedLang] || SAMPLE_VOICE_LINES['en-IN'];
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = selectedLang;
-    utterance.rate = 1.0;
-    utterance.onend = () => setIsPlayingAudio(false);
-    utterance.onerror = () => setIsPlayingAudio(false);
-    setIsPlayingAudio(true);
-    window.speechSynthesis.speak(utterance);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    const audioUrl = `/audio/how-${(selectedLang || 'en-IN').toLowerCase()}.mp3`;
+    try {
+      const audio = new Audio(audioUrl);
+      audioRef.current = audio;
+      setIsPlayingAudio(true);
+      audio.onended = () => {
+        setIsPlayingAudio(false);
+        audioRef.current = null;
+      };
+      audio.onerror = () => {
+        setVoiceHint(`ElevenLabs voice sample (${audioUrl}) failed to load.`);
+        setIsPlayingAudio(false);
+        audioRef.current = null;
+      };
+      const playPromise = audio.play();
+      if (playPromise && typeof playPromise.catch === 'function') {
+        playPromise.catch((err: any) => {
+          setVoiceHint(err?.message || 'Audio playback blocked.');
+          setIsPlayingAudio(false);
+        });
+      }
+    } catch (err: any) {
+      setVoiceHint(err?.message || 'Audio playback failed.');
+      setIsPlayingAudio(false);
+    }
   };
 
   const handleBuildEmployee = (e: React.FormEvent) => {

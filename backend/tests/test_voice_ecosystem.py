@@ -131,6 +131,24 @@ def test_sync_favorites_usage_and_agent_assignment(demo_auth_headers, monkeypatc
     assert u["total_requests"] >= 2
     assert u["cache_hits"] >= 1
     assert u["billed_characters"] >= 100
+    assert u["preview_requests"] >= 2
+
+    # Strict model validation: incompatible model + language returns 400 instead of silently downgrading
+    bad_model = client.post(
+        "/api/voices/preview",
+        headers=demo_auth_headers,
+        json={"provider": "elevenlabs", "voice_id": "EXAVITQu4vr4xnSDxMaL", "language": "te-IN", "model_id": "eleven_flash_v2_5", "text": "Namaskaram"},
+    )
+    assert bad_model.status_code == 400
+    assert "does not support" in bad_model.json()["detail"]
+
+    # Input length validation (>1500 chars rejected)
+    too_long = client.post(
+        "/api/voices/preview",
+        headers=demo_auth_headers,
+        json={"provider": "elevenlabs", "voice_id": "EXAVITQu4vr4xnSDxMaL", "language": "en-IN", "text": "x" * 1501},
+    )
+    assert too_long.status_code == 422
 
     # AI Employee assignment with quality_profile & voice_personality
     agents = client.get("/api/agents", headers=demo_auth_headers).json()["agents"]

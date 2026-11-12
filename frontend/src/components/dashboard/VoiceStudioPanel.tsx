@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Volume2,
   Play,
+  Pause,
   Square,
   RefreshCw,
   Star,
@@ -13,6 +14,7 @@ import {
   Gauge,
   Coins,
   ShieldAlert,
+  Loader2,
 } from 'lucide-react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import type { Agent } from '@/types/trivaana';
@@ -21,31 +23,78 @@ interface VoiceStudioPanelProps {
   onAgentUpdated?: () => void;
 }
 
+const SHOWCASE_ALIAS_BY_VOICE_ID: Record<string, string> = {
+  EXAVITQu4vr4xnSDxMaL: 'Priya (Hindi)',
+  CwhRBWXzGAHq8TQ4Fs17: 'Aravind (Telugu)',
+  TX3LPaxmHKxFdv7VOQHJ: 'Rohan (Indian English)',
+  FGY2WhTYpPnrIDTdsKH5: 'Kavya (Tamil)',
+};
+
 const SAMPLE_PHRASES: Record<string, { native: string; romanized: string; codeSwitch: string }> = {
-  'te-IN': {
-    native: 'నమస్కారం అండి! నేను త్రివానా ఏఐ నుండి మాట్లాడుతున్నాను. మీ గేటెడ్ విల్లా విజిట్ శనివారం ఉదయం 10:30కి బుక్ చేయమంటారా?',
-    romanized: 'Namaskaram andi! Mee gated villa site visit Saturday morning 10:30 AM ki book cheyamantara?',
-    codeSwitch: 'Hello sir, mee ₹1.40 Crore East-facing villa brochure WhatsApp lo pampinchaanu. Schedule confirm cheddama?',
-  },
-  'hi-IN': {
-    native: 'नमस्ते! मैं अपोलो डेंटल क्लिनिक से बोल रही हूँ। क्या कल सुबह 10:30 बजे का आपका अपॉइंटमेंट कन्फर्म कर दूँ?',
-    romanized: 'Namaste! Main Apollo Dental Clinic se bol rahi hoon. Kya kal subah 10:30 baje ka appointment confirm kar doon?',
-    codeSwitch: 'Hi Rahul ji, aapka ₹4,999 health checkup slot tomorrow morning 10:30 AM ke liye confirm kar dein?',
-  },
-  'ta-IN': {
-    native: 'வணக்கம்! உங்கள் வணிக கடன் தகுதி சரிபார்ப்பை இரண்டு நிமிடங்களில் முடிக்கலாமா?',
-    romanized: 'Vanakkam! Ungal business loan eligibility check-ai 2 minutes-il mudikkalama?',
-    codeSwitch: 'Hello sir, ungal ₹25 Lakh MSME loan offer ready-aa irukku. Tomorrow 11 AM call schedule pannalama?',
-  },
   'en-IN': {
-    native: 'Hi there! Calling from Trivaana AI regarding your NEET 2027 scholarship mock test slot this Sunday at 10 AM.',
-    romanized: 'Hi there! Calling from Trivaana AI regarding your NEET 2027 scholarship mock test slot this Sunday at 10 AM.',
+    native: "Hello! Welcome to Trivaana AI. I'm your virtual assistant. How can I help you today?",
+    romanized: "Hello! Welcome to Trivaana AI. I'm your virtual assistant. How can I help you today?",
     codeSwitch: 'Namaste! Calling from Hyderabad regarding your ₹14,999 annual health membership renewal.',
   },
+  'hi-IN': {
+    native: 'नमस्ते! ट्रिवाना एआई में आपका स्वागत है। मैं आपकी वर्चुअल असिस्टेंट हूँ। आज मैं आपकी क्या मदद कर सकती हूँ?',
+    romanized: 'Namaste! Trivaana AI mein aapka swagat hai. Aaj main aapki kya madad kar sakti hoon?',
+    codeSwitch: 'Hi Rahul ji, aapka ₹4,999 health checkup slot tomorrow morning 10:30 AM ke liye confirm kar dein?',
+  },
+  'te-IN': {
+    native: 'నమస్కారం! ట్రివానా ఏఐకి స్వాగతం. నేను మీ వర్చువల్ అసిస్టెంట్ని. ఈరోజు మీకు ఎలా సహాయం చేయగలను?',
+    romanized: 'Namaskaram! Trivaana AI ki swagatham. Eeroju meeku ela sahayam cheyagalanu?',
+    codeSwitch: 'Hello sir, mee ₹1.40 Crore East-facing villa brochure WhatsApp lo pampinchaanu. Schedule confirm cheddama?',
+  },
+  'ta-IN': {
+    native: 'வணக்கம்! ட்ரிவானா AI-க்கு உங்களை வரவேற்கிறோம். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?',
+    romanized: 'Vanakkam! Trivaana AI-kku ungalai varaverkirom. Indru naan ungalukku eppadi udhava mudiyum?',
+    codeSwitch: 'Hello sir, ungal ₹25 Lakh MSME loan offer ready-aa irukku. Tomorrow 11 AM call schedule pannalama?',
+  },
   'kn-IN': {
-    native: 'ನಮಸ್ಕಾರ! ನಿಮ್ಮ ಅಪಾಯಿಂಟ್‌ಮೆಂಟ್ ಅನ್ನು ನಾಳೆ ಬೆಳಿಗ್ಗೆ 11 ಗಂಟೆಗೆ ನಿಗದಿಪಡಿಸಬಹುದೇ?',
-    romanized: 'Namaskara! Nimma appointment-anna nale beligge 11 gantege fix madabahuda?',
+    native: 'ನಮಸ್ಕಾರ! ಟ್ರಿವಾನಾ ಎಐಗೆ ಸ್ವಾಗತ. ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?',
+    romanized: 'Namaskara! Trivaana AI-ge swagata. Indu nanu nimage hege sahaya madabahudu?',
     codeSwitch: 'Hello sir, Indiranagar clinic-nalli tomorrow 11 AM consultation slot confirm madbeka?',
+  },
+  'ml-IN': {
+    native: 'നമസ്കാരം! ട്രിവാന എഐയിലേക്ക് സ്വാഗതം. ഇന്ന് എനിക്ക് നിങ്ങളെ എങ്ങനെ സഹായിക്കാം?',
+    romanized: 'Namaskaram! Trivaana AI-yilekku swagatham. Innu enikku ningale engane sahayikkam?',
+    codeSwitch: 'Hello sir, Kochi branch-il tomorrow 10:30 AM appointment confirm cheyyamo?',
+  },
+  'mr-IN': {
+    native: 'नमस्कार! ट्रिवाना एआयमध्ये तुमचे स्वागत आहे. आज मी तुम्हाला कशी मदत करू शकते?',
+    romanized: 'Namaskar! Trivaana AI madhye tumche swagat ahe. Aaj mi tumhala kashi madat karu shakte?',
+    codeSwitch: 'Hello sir, Pune Baner project-cha ₹95 Lakh floor plan WhatsApp var pathavla ahe.',
+  },
+  'bn-IN': {
+    native: 'নমস্কার! ত্রিভানা এআই-তে আপনাকে স্বাগতম। আজ আমি আপনাকে কীভাবে সাহায্য করতে পারি?',
+    romanized: 'Nomoshkar! Trivaana AI-te apnake shagotom. Aaj ami apnake kibhabe shahajjo korte pari?',
+    codeSwitch: 'Hello sir, Salt Lake clinic-e tomorrow 11 AM dental checkup slot confirm korbo?',
+  },
+  'gu-IN': {
+    native: 'નમસ્તે! ત્રિવાના એઆઈમાં આપનું સ્વાગત છે. આજે હું આપને કેવી રીતે મદદ કરી શકું?',
+    romanized: 'Namaste! Trivaana AI ma aapnu swagat chhe. Aaje hu aapne kevi rite madad kari shaku?',
+    codeSwitch: 'Hello sir, SG Highway showroom ma tomorrow 4 PM test drive book kariye?',
+  },
+  'pa-IN': {
+    native: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਤ੍ਰਿਵਾਨਾ ਏਆਈ ਵਿੱਚ ਤੁਹਾਡਾ ਸਵਾਗਤ ਹੈ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦੀ ਹਾਂ?',
+    romanized: 'Sat Sri Akal! Trivaana AI vich tuhada swagat hai. Ajj main tuhadi ki madad kar sakdi haan?',
+    codeSwitch: 'Hello sir, Mohali office vich kal 11 AM appointment confirm kar daiye?',
+  },
+  'or-IN': {
+    native: 'ନମସ୍କାର! ତ୍ରିଭାନା ଏଆଇକୁ ସ୍ୱାଗତ। ଆଜି ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?',
+    romanized: 'Namaskar! Trivaana AI-ku swagata. Aji mun apananku kipari sahajya kariparibi?',
+    codeSwitch: 'Hello sir, Bhubaneswar clinic-re tomorrow 10 AM slot confirm kariba ki?',
+  },
+  'as-IN': {
+    native: 'নমস্কাৰ! ত্ৰিভানা এআইলৈ স্বাগতম। আজি মই আপোনাক কেনেকৈ সহায় কৰিব পাৰোঁ?',
+    romanized: 'Nomoskar! Trivaana AI-loi swagatom. Aji moi aponak kenekoi xohai koribo paron?',
+    codeSwitch: 'Hello sir, Guwahati center-ot tomorrow 11 AM appointment confirm korim ne?',
+  },
+  'ur-IN': {
+    native: 'السلام علیکم! تریوانا اے آئی میں خوش آمدید۔ آج میں آپ کی کیا مدد کر سکتی ہوں؟',
+    romanized: 'Assalam-o-Alaikum! Trivaana AI mein khush aamdeed. Aaj main aapki kya madad kar sakti hoon?',
+    codeSwitch: 'Hello sir, aapka tomorrow 11 AM consultation slot confirm kar dein?',
   },
 };
 
@@ -61,10 +110,13 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
   const [selectedLang, setSelectedLang] = useState('te-IN');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [genderFilter, setGenderFilter] = useState('');
+  const [accentFilter, setAccentFilter] = useState('');
   const [favoritesOnly, setFavoritesOnly] = useState(false);
 
   const [selectedVoice, setSelectedVoice] = useState<any>(null);
   const [compareVoice, setCompareVoice] = useState<any>(null);
+  const [selectedModelId, setSelectedModelId] = useState<string>('auto');
   const [qualityProfile, setQualityProfile] = useState<'economy' | 'balanced' | 'premium'>('balanced');
   const [personality, setPersonality] = useState('professional');
   const [speed, setSpeed] = useState(1.0);
@@ -73,7 +125,10 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [synthesizingId, setSynthesizingId] = useState<string | null>(null);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
+  const [nowPlayingInfo, setNowPlayingInfo] = useState<{ voiceName: string; modelId: string } | null>(null);
   const [lastPreviewMeta, setLastPreviewMeta] = useState<any>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -84,6 +139,9 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
         trivaanaApi.getVoices({
           language: selectedLang || undefined,
           category: categoryFilter || undefined,
+          gender: genderFilter || undefined,
+          accent: accentFilter || undefined,
+          model_id: selectedModelId !== 'auto' ? selectedModelId : undefined,
           search: search || undefined,
           favorites_only: favoritesOnly || undefined,
         }),
@@ -114,7 +172,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     } finally {
       setLoading(false);
     }
-  }, [selectedLang, categoryFilter, search, favoritesOnly, selectedVoice, selectedAgentId]);
+  }, [selectedLang, categoryFilter, genderFilter, accentFilter, selectedModelId, search, favoritesOnly, selectedVoice, selectedAgentId]);
 
   useEffect(() => {
     loadStudio();
@@ -148,21 +206,38 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
     }
   };
 
-  const handlePreviewVoice = async (voice: any) => {
-    if (playingId === voice.id) {
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      setPlayingId(null);
-      return;
-    }
+  const stopPlayback = () => {
     if (audioRef.current) {
       audioRef.current.pause();
+      audioRef.current.currentTime = 0;
       audioRef.current = null;
     }
-    setPlayingId(voice.id);
+    setPlayingId(null);
+    setIsPaused(false);
+    setNowPlayingInfo(null);
+  };
+
+  const togglePauseResume = () => {
+    if (!audioRef.current) return;
+    if (isPaused) {
+      audioRef.current.play().then(() => setIsPaused(false)).catch(() => {
+        setFeedback({ type: 'error', message: 'Unable to resume audio playback.' });
+      });
+    } else {
+      audioRef.current.pause();
+      setIsPaused(true);
+    }
+  };
+
+  const handlePreviewVoice = async (voice: any, modelOverride?: string) => {
+    if (playingId === voice.id && !modelOverride) {
+      stopPlayback();
+      return;
+    }
+    stopPlayback();
+    setSynthesizingId(voice.id);
     setFeedback(null);
+    const modelToUse = modelOverride || (selectedModelId !== 'auto' ? selectedModelId : undefined);
     try {
       const res = await trivaanaApi.previewVoice({
         voice_id: voice.provider_voice_id,
@@ -171,28 +246,35 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
         text: testText,
         quality_profile: qualityProfile,
         personality,
+        model_id: modelToUse,
         speed,
       });
       if (res.status === 'plan_upgrade_required') {
-        setPlayingId(null);
         setFeedback({ type: 'error', message: res.message || 'This voice requires a paid ElevenLabs plan.' });
         return;
       }
       if (!res.audio_base64) {
-        setPlayingId(null);
-        setFeedback({ type: 'error', message: res.message || 'No audio returned by provider.' });
+        setFeedback({ type: 'error', message: res.message || 'No audio returned by ElevenLabs.' });
         return;
       }
       setLastPreviewMeta(res);
+      setNowPlayingInfo({ voiceName: voice.name, modelId: res.model_used || modelToUse || 'eleven_v4_turbo' });
       const audio = new Audio(`data:${res.content_type || 'audio/mpeg'};base64,${res.audio_base64}`);
       audioRef.current = audio;
-      audio.onended = () => setPlayingId(null);
-      audio.onerror = () => setPlayingId(null);
+      setPlayingId(voice.id);
+      setIsPaused(false);
+      audio.onended = () => stopPlayback();
+      audio.onerror = () => {
+        setFeedback({ type: 'error', message: `Audio element failed to decode ElevenLabs output for ${voice.name}.` });
+        stopPlayback();
+      };
       await audio.play();
       trivaanaApi.getVoiceUsage(30).then(setUsage).catch(() => {});
     } catch (err: any) {
-      setPlayingId(null);
+      stopPlayback();
       setFeedback({ type: 'error', message: err.message || 'Voice preview failed.' });
+    } finally {
+      setSynthesizingId(null);
     }
   };
 
@@ -330,7 +412,7 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
       )}
 
       {/* Filters & Controls */}
-      <div className="bg-white rounded-3xl p-5 border border-slate-200/90 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3 text-xs">
+      <div className="bg-white rounded-3xl p-5 border border-slate-200/90 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
         <div>
           <label htmlFor="vs-language" className="block font-bold text-slate-700 mb-1">Indian Language (13)</label>
           <select
@@ -376,6 +458,58 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
             <option value="premade">Premade (Included)</option>
             <option value="professional">Professional Library</option>
             <option value="cloned">Custom Cloned</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="vs-gender" className="block font-bold text-slate-700 mb-1">Gender</label>
+          <select
+            id="vs-gender"
+            value={genderFilter}
+            onChange={(e) => setGenderFilter(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+          >
+            <option value="">All Genders</option>
+            <option value="female">Female</option>
+            <option value="male">Male</option>
+            <option value="neutral">Neutral</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="vs-accent" className="block font-bold text-slate-700 mb-1">Accent</label>
+          <select
+            id="vs-accent"
+            value={accentFilter}
+            onChange={(e) => setAccentFilter(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+          >
+            <option value="">All Accents</option>
+            <option value="american">American</option>
+            <option value="british">British</option>
+            <option value="australian">Australian</option>
+            <option value="indian">Indian</option>
+            <option value="standard">Standard</option>
+          </select>
+        </div>
+        <div>
+          <label htmlFor="vs-model" className="block font-bold text-slate-700 mb-1">ElevenLabs TTS Model</label>
+          <select
+            id="vs-model"
+            value={selectedModelId}
+            onChange={(e) => setSelectedModelId(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
+          >
+            <option value="auto">Auto (By Quality Profile)</option>
+            {models
+              .filter((m) => m.can_do_tts !== false && m.availability_status !== 'restricted')
+              .map((m) => {
+                const iso = selectedLang.split('-')[0].toLowerCase();
+                const langOk = (m.languages || []).includes(iso);
+                return (
+                  <option key={m.model_id} value={m.model_id}>
+                    {m.model_id} {!langOk ? `(Unsupported for ${selectedLang})` : ''}
+                  </option>
+                );
+              })}
           </select>
         </div>
         <div>
@@ -449,7 +583,14 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
-                        <div className="font-bold text-xs text-slate-900 truncate">{v.name}</div>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-xs text-slate-900 truncate">{v.name}</span>
+                          {SHOWCASE_ALIAS_BY_VOICE_ID[v.provider_voice_id] && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-orange-100 text-orange-800 text-[9px] font-bold">
+                              Showcase: {SHOWCASE_ALIAS_BY_VOICE_ID[v.provider_voice_id]}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] font-mono text-slate-400 truncate">{v.provider_voice_id}</div>
                       </div>
                       <button
@@ -491,15 +632,21 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
                     <div className="flex items-center justify-between pt-1 border-t border-slate-200/70">
                       <button
                         type="button"
-                        disabled={restricted}
+                        disabled={restricted || synthesizingId === v.id}
                         onClick={(e) => {
                           e.stopPropagation();
                           handlePreviewVoice(v);
                         }}
                         className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-40"
                       >
-                        {isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                        <span>{isPlaying ? 'Stop' : 'Preview'}</span>
+                        {synthesizingId === v.id ? (
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                        ) : isPlaying ? (
+                          <Square className="w-3 h-3" />
+                        ) : (
+                          <Play className="w-3 h-3" />
+                        )}
+                        <span>{synthesizingId === v.id ? 'Generating...' : isPlaying ? 'Stop' : 'Play'}</span>
                       </button>
                       <button
                         type="button"
@@ -571,19 +718,55 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
           {selectedVoice && (
             <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 space-y-2">
-              <div className="font-bold text-slate-900">Selected: {selectedVoice.name}</div>
-              <div className="text-[11px] text-slate-600 font-mono break-all">ID: {selectedVoice.provider_voice_id}</div>
+              <div className="font-bold text-slate-900">
+                Selected: {selectedVoice.name}
+                {SHOWCASE_ALIAS_BY_VOICE_ID[selectedVoice.provider_voice_id]
+                  ? ` (${SHOWCASE_ALIAS_BY_VOICE_ID[selectedVoice.provider_voice_id]})`
+                  : ''}
+              </div>
+              <div className="text-[11px] text-slate-600 font-mono break-all">
+                ID: {selectedVoice.provider_voice_id} · Model: {selectedModelId === 'auto' ? `Auto (${qualityProfile})` : selectedModelId}
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
-                  disabled={selectedVoice.access_status === 'plan_upgrade_required'}
+                  disabled={selectedVoice.access_status === 'plan_upgrade_required' || synthesizingId === selectedVoice.id}
                   onClick={() => handlePreviewVoice(selectedVoice)}
                   className="flex-1 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-40"
                 >
-                  <Play className="w-3.5 h-3.5" />
-                  <span>Synthesize &amp; Play</span>
+                  {synthesizingId === selectedVoice.id ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Play className="w-3.5 h-3.5" />
+                  )}
+                  <span>{synthesizingId === selectedVoice.id ? 'Generating...' : 'Generate & Play'}</span>
                 </button>
+                {playingId && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={togglePauseResume}
+                      className="px-3 py-2 rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-900 font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
+                      <span>{isPaused ? 'Resume' : 'Pause'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={stopPlayback}
+                      className="px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Square className="w-3.5 h-3.5" />
+                      <span>Stop</span>
+                    </button>
+                  </>
+                )}
               </div>
+              {nowPlayingInfo && (
+                <div className="text-[11px] font-semibold text-orange-700 bg-orange-50 border border-orange-200 rounded-xl px-2.5 py-1.5">
+                  {isPaused ? 'Paused' : 'Playing'}: {nowPlayingInfo.voiceName} · <span className="font-mono">{nowPlayingInfo.modelId}</span>
+                </div>
+              )}
             </div>
           )}
 
@@ -643,28 +826,76 @@ export const VoiceStudioPanel: React.FC<VoiceStudioPanelProps> = ({ onAgentUpdat
 
       {/* Model Discovery Reference Table */}
       <div className="bg-white rounded-3xl p-5 border border-slate-200/90 space-y-3">
-        <h2 className="text-sm font-extrabold text-slate-900">Discovered ElevenLabs Speech Models ({models.length})</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-extrabold text-slate-900">Discovered ElevenLabs Speech Models ({models.length})</h2>
+          <span className="text-[11px] text-slate-500">Select a compatible model to audition with the active voice &amp; language</span>
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead className="text-[11px] text-slate-500 border-b border-slate-200">
               <tr>
-                <th className="py-2 pr-3">Model ID</th>
-                <th className="py-2 pr-3">Quality Tier</th>
-                <th className="py-2 pr-3">Latency</th>
+                <th className="py-2 pr-3">Model</th>
+                <th className="py-2 pr-3">Status ({selectedLang})</th>
+                <th className="py-2 pr-3">Capabilities</th>
                 <th className="py-2 pr-3">Indian Languages</th>
-                <th className="py-2">Max Chars</th>
+                <th className="py-2 pr-3">Max Chars</th>
+                <th className="py-2">Test</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {models.map((m) => (
-                <tr key={m.model_id}>
-                  <td className="py-2 pr-3 font-mono font-semibold text-slate-900">{m.model_id}</td>
-                  <td className="py-2 pr-3 capitalize">{m.quality_tier}</td>
-                  <td className="py-2 pr-3 capitalize">{m.latency_tier?.replace('_', ' ')}</td>
-                  <td className="py-2 pr-3 text-slate-600">{(m.languages || []).filter((l: string) => ['en', 'hi', 'te', 'ta', 'kn', 'ml', 'mr', 'bn', 'gu', 'pa', 'or', 'as', 'ur'].includes(l)).join(', ')}</td>
-                  <td className="py-2 tabular-nums">{m.max_chars_subscribed?.toLocaleString() || '10,000'}</td>
-                </tr>
-              ))}
+              {models.map((m) => {
+                const iso = selectedLang.split('-')[0].toLowerCase();
+                const langSupported = (m.languages || []).includes(iso);
+                const canTts = m.can_do_tts !== false && m.availability_status !== 'restricted';
+                const statusBadge = !canTts
+                  ? { label: 'Restricted / Non-TTS', cls: 'bg-red-100 text-red-700' }
+                  : !langSupported
+                  ? { label: `Unsupported (${selectedLang})`, cls: 'bg-slate-100 text-slate-600' }
+                  : m.experimental
+                  ? { label: 'Experimental', cls: 'bg-amber-100 text-amber-800' }
+                  : { label: 'Available', cls: 'bg-emerald-100 text-emerald-700' };
+                return (
+                  <tr key={m.model_id}>
+                    <td className="py-2.5 pr-3">
+                      <div className="font-mono font-semibold text-slate-900">{m.model_id}</div>
+                      <div className="text-[11px] text-slate-500">{m.name}</div>
+                    </td>
+                    <td className="py-2.5 pr-3">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${statusBadge.cls}`}>
+                        {statusBadge.label}
+                      </span>
+                    </td>
+                    <td className="py-2.5 pr-3 text-[11px] text-slate-600">
+                      {[
+                        canTts ? 'TTS' : null,
+                        m.streaming_supported ? 'Streaming' : null,
+                        m.low_latency_suitable ? 'Low Latency' : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || '—'}
+                    </td>
+                    <td className="py-2.5 pr-3 text-slate-600">
+                      {(m.languages || [])
+                        .filter((l: string) => ['en', 'hi', 'te', 'ta', 'kn', 'ml', 'mr', 'bn', 'gu', 'pa', 'or', 'as', 'ur'].includes(l))
+                        .join(', ') || '—'}
+                    </td>
+                    <td className="py-2.5 pr-3 tabular-nums">{m.max_chars_subscribed?.toLocaleString() || '10,000'}</td>
+                    <td className="py-2.5">
+                      <button
+                        type="button"
+                        disabled={!canTts || !langSupported || !selectedVoice}
+                        onClick={() => {
+                          setSelectedModelId(m.model_id);
+                          if (selectedVoice) handlePreviewVoice(selectedVoice, m.model_id);
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-900 text-white text-[11px] font-bold cursor-pointer disabled:opacity-40"
+                      >
+                        Listen
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -198,21 +198,37 @@ class VoiceSelectionService:
 
     @classmethod
     def get_model_catalog(cls, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Dict[str, Any]]:
-        catalog = {k: dict(v) for k, v in DEFAULT_MODEL_SPECS.items()}
+        catalog = {}
+        for k, v in DEFAULT_MODEL_SPECS.items():
+            item = dict(v)
+            item.setdefault("description", "")
+            item["can_do_tts"] = True
+            item["low_latency_suitable"] = item.get("latency_tier") in ("ultra_low", "low")
+            item["availability_status"] = "available"
+            item["experimental"] = "v3" in k
+            catalog[k] = item
         if conn is not None:
             try:
-                rows = conn.execute("SELECT * FROM voice_models WHERE can_do_tts = 1").fetchall()
+                rows = conn.execute("SELECT * FROM voice_models").fetchall()
                 for r in rows:
+                    mid = r["model_id"]
+                    can_tts = bool(r["can_do_tts"])
                     langs = json.loads(r["languages_json"] or "[]")
-                    catalog[r["model_id"]] = {
+                    latency_tier = r["latency_tier"]
+                    catalog[mid] = {
                         "name": r["name"],
+                        "description": r["description"] or "",
+                        "can_do_tts": can_tts,
                         "languages": langs,
                         "cost_factor": float(r["cost_factor"] or 1.0),
-                        "latency_tier": r["latency_tier"],
+                        "latency_tier": latency_tier,
+                        "low_latency_suitable": latency_tier in ("ultra_low", "low"),
                         "quality_tier": r["quality_tier"],
                         "max_chars_free": int(r["max_chars_free"] or 5000),
                         "max_chars_subscribed": int(r["max_chars_subscribed"] or 10000),
                         "streaming_supported": bool(r["streaming_supported"]),
+                        "availability_status": "available" if can_tts else "restricted",
+                        "experimental": "v3" in mid,
                     }
             except Exception:
                 pass
@@ -246,14 +262,23 @@ class VoiceSelectionService:
         }
 
         chosen_model = None
-        if explicit_model_id and explicit_model_id in catalog:
-            if iso in catalog[explicit_model_id]["languages"]:
-                chosen_model = explicit_model_id
+        if explicit_model_id:
+            if explicit_model_id not in catalog:
+                raise ValueError(f"Requested model '{explicit_model_id}' is not in the discovered ElevenLabs catalog.")
+            exp_spec = catalog[explicit_model_id]
+            if not exp_spec.get("can_do_tts", True) or exp_spec.get("availability_status") == "restricted":
+                raise ValueError(f"Model '{explicit_model_id}' does not support Text-to-Speech on this account.")
+            if iso not in (exp_spec.get("languages") or []):
+                raise ValueError(
+                    f"Model '{explicit_model_id}' does not support language '{language}' ({iso}). "
+                    f"Select a compatible model such as eleven_v4_turbo or eleven_v4."
+                )
+            chosen_model = explicit_model_id
 
         if not chosen_model:
             for candidate in preference_map[profile]:
                 spec = catalog.get(candidate)
-                if spec and iso in spec["languages"]:
+                if spec and spec.get("can_do_tts", True) and iso in spec["languages"]:
                     chosen_model = candidate
                     break
 
@@ -510,7 +535,11 @@ class VoiceUsageService:
                 COALESCE(SUM(CASE WHEN cache_hit = 0 THEN characters_requested ELSE 0 END), 0) as billed_characters,
                 COALESCE(SUM(estimated_cost_paise), 0) as estimated_cost_paise,
                 COALESCE(SUM(actual_cost_paise), 0) as actual_cost_paise,
-                COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+                COALESCE(AVG(latency_ms), 0) as avg_latency_ms,
+                COALESCE(SUM(CASE WHEN call_id IS NULL THEN 1 ELSE 0 END), 0) as preview_requests,
+                COALESCE(SUM(CASE WHEN call_id IS NULL THEN characters_requested ELSE 0 END), 0) as preview_characters,
+                COALESCE(SUM(CASE WHEN call_id IS NOT NULL THEN 1 ELSE 0 END), 0) as call_requests,
+                COALESCE(SUM(CASE WHEN call_id IS NOT NULL THEN characters_requested ELSE 0 END), 0) as call_characters
             FROM voice_usage_logs
             WHERE tenant_id = ? AND created_at >= ?
             """,
@@ -560,6 +589,10 @@ class VoiceUsageService:
             "cache_hit_rate_pct": round((cache_hits / total_req) * 100.0, 1) if total_req > 0 else 0.0,
             "total_characters": int(agg["total_characters"] or 0),
             "billed_characters": int(agg["billed_characters"] or 0),
+            "preview_requests": int(agg["preview_requests"] or 0),
+            "preview_characters": int(agg["preview_characters"] or 0),
+            "call_requests": int(agg["call_requests"] or 0),
+            "call_characters": int(agg["call_characters"] or 0),
             "estimated_cost_paise": int(agg["estimated_cost_paise"] or 0),
             "estimated_cost_inr": round((agg["estimated_cost_paise"] or 0) / 100.0, 2),
             "actual_cost_paise": int(agg["actual_cost_paise"] or 0),

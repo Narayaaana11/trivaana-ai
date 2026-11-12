@@ -17,52 +17,66 @@ interface VoiceShowcaseSectionProps {
 const VOICE_PROFILES = [
   {
     id: 'aravind',
+    voiceId: 'CwhRBWXzGAHq8TQ4Fs17',
+    voiceLabel: 'Roger · Warm & Resonant',
     name: 'Aravind · Real Estate',
     lang: 'te-IN',
     languageLabel: 'Telugu (తెలుగు)',
-    tier: 'Standard · ₹6.50/min',
-    provider: 'ElevenLabs Multilingual v2',
+    tier: 'Balanced · ₹6.50/min',
+    modelId: 'eleven_v4_turbo',
+    provider: 'ElevenLabs v4 Turbo',
     audioUrl: '/audio/aravind.mp3',
-    sample: 'నమస్కారం అండి! గేటెడ్ విల్లాస్ బ్రోచర్ గురించి కాల్ చేస్తున్నాను. ఈ శనివారం విజిట్ బుక్ చేద్దామా?',
+    sample: 'నమస్కారం! ట్రివానా ఏఐకి స్వాగతం. నేను మీ వర్చువల్ అసిస్టెంట్ని. ఈరోజు మీకు ఎలా సహాయం చేయగలను?',
     tone: 'Warm · Confident · Conversational',
   },
   {
     id: 'priya',
+    voiceId: 'EXAVITQu4vr4xnSDxMaL',
+    voiceLabel: 'Sarah · Reassuring & Clear',
     name: 'Priya · Healthcare Desk',
     lang: 'hi-IN',
     languageLabel: 'Hindi (हिन्दी)',
     tier: 'Premium · ₹8.50/min',
-    provider: 'ElevenLabs Flash v2.5',
+    modelId: 'eleven_v4_turbo',
+    provider: 'ElevenLabs v4 Turbo',
     audioUrl: '/audio/priya.mp3',
-    sample: 'नमस्ते! अपोलो डेंटल क्लिनिक से प्रिया बोल रही हूँ। कल सुबह 10:30 का अपॉइंटमेंट कन्फर्म कर दूँ?',
+    sample: 'नमस्ते! ट्रिवाना एआई में आपका स्वागत है। मैं आपकी वर्चुअल असिस्टेंट हूँ। आज मैं आपकी क्या मदद कर सकती हूँ?',
     tone: 'Empathetic · Clear · Polite',
   },
   {
     id: 'rohan',
+    voiceId: 'TX3LPaxmHKxFdv7VOQHJ',
+    voiceLabel: 'Liam · Energetic & Crisp',
     name: 'Rohan · EdTech Counselor',
     lang: 'en-IN',
     languageLabel: 'Indian English',
-    tier: 'Standard · ₹6.50/min',
-    provider: 'ElevenLabs Flash v2.5',
+    tier: 'Balanced · ₹6.50/min',
+    modelId: 'eleven_v4_turbo',
+    provider: 'ElevenLabs v4 Turbo',
     audioUrl: '/audio/rohan.mp3',
-    sample: 'Hi there! Calling about your daughter’s NEET 2027 mock test scholarship slot this Sunday at 10 AM.',
-    tone: 'Crisp · Energetic · Natural Indian Cadence',
+    sample: "Hello! Welcome to Trivaana AI. I'm your virtual assistant. How can I help you today?",
+    tone: 'Crisp · Energetic · Natural Cadence',
   },
   {
     id: 'kavya',
+    voiceId: 'FGY2WhTYpPnrIDTdsKH5',
+    voiceLabel: 'Laura · Bright & Expressive',
     name: 'Kavya · Financial Advisory',
     lang: 'ta-IN',
     languageLabel: 'Tamil (தமிழ்)',
     tier: 'Premium · ₹8.50/min',
-    provider: 'ElevenLabs Flash v2.5',
+    modelId: 'eleven_v4_turbo',
+    provider: 'ElevenLabs v4 Turbo',
     audioUrl: '/audio/kavya.mp3',
-    sample: 'வணக்கம்! உங்கள் வணிக கடன் தகுதி சரிபார்ப்பை 2 நிமிடங்களில் முடிக்கலாமா?',
+    sample: 'வணக்கம்! ட்ரிவானா AI-க்கு உங்களை வரவேற்கிறோம். இன்று நான் உங்களுக்கு எப்படி உதவ முடியும்?',
     tone: 'Trustworthy · Measured · Multilingual',
   },
 ];
 
 export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEnterDashboard }) => {
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [isPaused, setIsPaused] = useState(false);
+  const [audioError, setAudioError] = useState<string | null>(null);
   const [progress, setProgress] = useState<number>(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -72,10 +86,8 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
       audioRef.current.currentTime = 0;
       audioRef.current = null;
     }
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
     setPlayingId(null);
+    setIsPaused(false);
     setProgress(0);
   };
 
@@ -85,19 +97,26 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
         audioRef.current.pause();
         audioRef.current = null;
       }
-      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-        window.speechSynthesis.cancel();
-      }
     };
   }, []);
 
   const togglePlay = (profile: (typeof VOICE_PROFILES)[0]) => {
-    if (playingId === profile.id) {
-      stopAudio();
+    setAudioError(null);
+    if (playingId === profile.id && audioRef.current) {
+      if (isPaused) {
+        audioRef.current.play().then(() => setIsPaused(false)).catch(() => {
+          setAudioError(`Unable to resume audio for ${profile.name}.`);
+          stopAudio();
+        });
+      } else {
+        audioRef.current.pause();
+        setIsPaused(true);
+      }
       return;
     }
     stopAudio();
     setPlayingId(profile.id);
+    setIsPaused(false);
     setProgress(0);
 
     try {
@@ -110,27 +129,26 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
       };
       audio.onended = () => {
         setPlayingId(null);
+        setIsPaused(false);
         setProgress(0);
         audioRef.current = null;
       };
       audio.onerror = () => {
-        if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-          const u = new SpeechSynthesisUtterance(profile.sample);
-          u.lang = profile.lang;
-          u.onend = () => setPlayingId(null);
-          u.onerror = () => setPlayingId(null);
-          window.speechSynthesis.speak(u);
-        } else {
-          setPlayingId(null);
-        }
+        setAudioError(`Real ElevenLabs audio asset (${profile.audioUrl}) failed to load.`);
+        setPlayingId(null);
+        setIsPaused(false);
+        audioRef.current = null;
       };
       const playPromise = audio.play();
       if (playPromise && typeof playPromise.catch === 'function') {
-        playPromise.catch(() => {
-          audio.onerror?.(new Event('error'));
+        playPromise.catch((err: any) => {
+          setAudioError(err?.message || `Playback blocked for ${profile.name}.`);
+          setPlayingId(null);
+          setIsPaused(false);
         });
       }
-    } catch {
+    } catch (err: any) {
+      setAudioError(err?.message || 'Audio playback failed.');
       setPlayingId(null);
     }
   };
@@ -182,6 +200,11 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
         </FadeContent>
 
         {/* Interactive Voice Sample Grid with TiltedCard, BorderGlow & VoicePill */}
+        {audioError && (
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-xs font-semibold text-red-800 text-center">
+            {audioError}
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {VOICE_PROFILES.map((vp) => {
             const active = playingId === vp.id;
@@ -221,10 +244,13 @@ export const VoiceShowcaseSection: React.FC<VoiceShowcaseSectionProps> = ({ onEn
 
                     <div className="flex items-center justify-between">
                       <VoicePill
-                        active={active}
+                        active={active && !isPaused}
                         onClick={() => togglePlay(vp)}
-                        label={active ? 'Stop audio' : 'Hear voice sample'}
+                        label={active ? (isPaused ? 'Resume audio' : 'Pause audio') : 'Hear voice sample'}
                       />
+                      <span className="text-[10px] font-mono text-[#6e6e7e]">
+                        {vp.modelId} · {vp.voiceId.slice(0, 8)}…
+                      </span>
                       <button
                         type="button"
                         onClick={onEnterDashboard}
