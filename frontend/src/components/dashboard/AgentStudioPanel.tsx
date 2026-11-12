@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { trivaanaApi } from '@/lib/trivaana-api';
 import { Agent, VoiceProfile, KnowledgeDocument, CallLog } from '@/types/trivaana';
 import BRAND from '@/lib/brand';
@@ -25,7 +25,76 @@ import {
   Copy,
   GitCompare,
   GitBranch,
+  Loader2,
+  Volume2,
 } from 'lucide-react';
+
+const SARVAM_V3_DEFAULT_SPEAKER: Record<string, string> = {
+  'te-IN': 'shubh',
+  'hi-IN': 'priya',
+  'en-IN': 'ishita',
+  'ta-IN': 'kavya',
+  'kn-IN': 'kavitha',
+  'ml-IN': 'shruti',
+  'mr-IN': 'rupali',
+  'bn-IN': 'roopa',
+  'gu-IN': 'pooja',
+  'pa-IN': 'anand',
+  'or-IN': 'shubh',
+};
+
+const SARVAM_V4_DEFAULT_SPEAKER: Record<string, string> = {
+  'hi-IN': 'shubh_hi_customer',
+  'en-IN': 'ishita_en_customer',
+  'te-IN': 'kavitha_te_conversation',
+  'ta-IN': 'aravind_ta_ads',
+  'kn-IN': 'chaitra_kn_conversation',
+  'mr-IN': 'nilesh_mr_conversation',
+  'bn-IN': 'roopa_bn_conversational',
+  'gu-IN': 'pooja_gu_conversational',
+  'pa-IN': 'anand_pa_conversation',
+};
+
+const SARVAM_SAMPLE_BY_LANG: Record<string, string> = {
+  'te-IN': 'నమస్కారం! నేను త్రివాణ ఏఐ నుండి మాట్లాడుతున్నాను. ఈ రోజు మీకు ఎలా సహాయం చేయగలను?',
+  'hi-IN': 'नमस्ते! मैं त्रिवान एआई से बोल रही हूँ। आज मैं आपकी किस प्रकार मदद कर सकती हूँ?',
+  'en-IN': 'Hello! I am calling from Trivaana AI. How can I assist you today?',
+  'ta-IN': 'வணக்கம்! நான் ட்ரிவானா AI-இலிருந்து பேசுகிறேன். இன்று உங்களுக்கு எப்படி உதவ முடியும்?',
+  'kn-IN': 'ನಮಸ್ಕಾರ! ನಾನು ತ್ರಿವಾಣ ಎಐ ನಿಂದ ಮಾತನಾಡುತ್ತಿದ್ದೇನೆ. ಇಂದು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಲಿ?',
+  'ml-IN': 'നമസ്കാരം! ഞാൻ ട്രിവാന എഐയിൽ നിന്ന് സംസാരിക്കുകയാണ്. ഇന്ന് എങ്ങനെ സഹായിക്കാം?',
+  'mr-IN': 'नमस्कार! मी त्रिवान एआय मधून बोलत आहे. आज मी तुम्हाला कशी मदत करू शकते?',
+  'bn-IN': 'নমস্কার! আমি ত্রিভানা এআই থেকে বলছি। আজ আপনাকে কীভাবে সাহায্য করতে পারি?',
+  'gu-IN': 'નમસ્તે! હું ત્રિવાના એઆઈમાંથી બોલી રહ્યો છું. આજે હું તમને કેવી રીતે મદદ કરી શકું?',
+  'pa-IN': 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਮੈਂ ਤ੍ਰਿਵਾਣਾ ਏਆਈ ਤੋਂ ਬੋਲ ਰਿਹਾ ਹਾਂ। ਅੱਜ ਮੈਂ ਤੁਹਾਡੀ ਕੀ ਮਦਦ ਕਰ ਸਕਦਾ ਹਾਂ?',
+  'or-IN': 'ନମସ୍କାର! ମୁଁ ତ୍ରିବାଣା ଏଆଇରୁ କହୁଛି। ଆଜି ମୁଁ ଆପଣଙ୍କୁ କିପରି ସାହାଯ୍ୟ କରିପାରିବି?',
+};
+
+const SARVAM_MODEL_OPTIONS = [
+  {
+    id: 'bulbul:v3' as const,
+    name: 'Sarvam Bulbul v3',
+    badge: 'Flagship · 11 Languages',
+    ttsRate: '₹2.70 – ₹3.00 / 1K chars',
+    sttModel: 'saaras:v4 (₹0.41–₹0.49/min)',
+    apiPerMin: '₹1.76 – ₹1.99 / min',
+    ttsPerMin: '₹1.35 – ₹1.50 / min',
+    customerRate: '₹6.50 / min',
+    desc: 'Most natural human-like Indian voice quality across all 11 supported languages (37 speakers).',
+    supportedLangs: Object.keys(SARVAM_V3_DEFAULT_SPEAKER),
+  },
+  {
+    id: 'bulbul:v4-flash' as const,
+    name: 'Sarvam Bulbul v4 Flash',
+    badge: 'Ultra-Low Latency · Economy',
+    ttsRate: '₹0.85 – ₹1.00 / 1K chars',
+    sttModel: 'saaras:v4 (₹0.41–₹0.49/min)',
+    apiPerMin: '₹0.84 – ₹0.99 / min',
+    ttsPerMin: '₹0.43 – ₹0.50 / min',
+    customerRate: '₹6.50 / min',
+    desc: 'Fastest role-tuned regional speakers for high-volume customer support (9 languages).',
+    supportedLangs: Object.keys(SARVAM_V4_DEFAULT_SPEAKER),
+  },
+];
 
 interface AgentStudioPanelProps {
   initialPreset?: string;
@@ -91,7 +160,11 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
   const [newAgentName, setNewAgentName] = useState('');
   const [newAgentIndustry, setNewAgentIndustry] = useState('Real Estate');
   const [newAgentLang, setNewAgentLang] = useState('te-IN');
+  const [newAgentModel, setNewAgentModel] = useState<'bulbul:v3' | 'bulbul:v4-flash'>('bulbul:v3');
   const [newAgentBrief, setNewAgentBrief] = useState('');
+  const [auditioningModel, setAuditioningModel] = useState<string | null>(null);
+  const [playingModelId, setPlayingModelId] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   const loadAgentDetails = useCallback(async (agentId: string, lang?: string) => {
     try {
@@ -177,10 +250,17 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
         language: newAgentLang,
       });
       const cfg = gen.config;
+      const chosenSpeaker =
+        newAgentModel === 'bulbul:v4-flash'
+          ? SARVAM_V4_DEFAULT_SPEAKER[newAgentLang] || 'shubh_hi_customer'
+          : SARVAM_V3_DEFAULT_SPEAKER[newAgentLang] || 'shubh';
       const created = await trivaanaApi.createAgent({
         name: newAgentName,
         vertical: newAgentIndustry,
         language: newAgentLang,
+        provider: 'sarvam',
+        tts_model_id: newAgentModel,
+        voice_id: chosenSpeaker,
         greeting_message: cfg.greeting,
         personality: cfg.personality,
         system_prompt: cfg.system_prompt,
@@ -256,38 +336,94 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
     }
   };
 
-  const handleAuditionVoice = async () => {
-    if (isPlayingAudio) {
-      window.speechSynthesis?.cancel();
-      setIsPlayingAudio(false);
+  const stopAuditionAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
+    setIsPlayingAudio(false);
+    setPlayingModelId(null);
+  };
+
+  const handleAuditionSarvamModel = async (
+    modelId: 'bulbul:v3' | 'bulbul:v4-flash',
+    lang: string,
+    customText?: string,
+    speakerOverride?: string,
+  ) => {
+    if (playingModelId === modelId) {
+      stopAuditionAudio();
       return;
     }
-    const sample = formState.greeting_message || 'Namaskaram! Welcome to Trivaana AI.';
+    stopAuditionAudio();
+    const speaker =
+      speakerOverride ||
+      (modelId === 'bulbul:v4-flash'
+        ? SARVAM_V4_DEFAULT_SPEAKER[lang] || 'shubh_hi_customer'
+        : SARVAM_V3_DEFAULT_SPEAKER[lang] || 'shubh');
+    const text = customText?.trim() || SARVAM_SAMPLE_BY_LANG[lang] || SARVAM_SAMPLE_BY_LANG['en-IN'];
+    setAuditioningModel(modelId);
     try {
       const res = await trivaanaApi.previewVoice({
-        voice_id: formState.voice_id || 'meera',
-        provider: formState.provider || 'sarvam',
-        language: formState.language || 'te-IN',
+        provider: 'sarvam',
+        model_id: modelId,
+        voice_id: speaker,
+        language: lang,
+        text,
+        speed: formState.speech_rate || 1.0,
+      });
+      if (!res.audio_base64) {
+        setFeedback({ type: 'error', message: res.message || `No audio returned for ${modelId}.` });
+        return;
+      }
+      const audio = new Audio(`data:${res.content_type || 'audio/mpeg'};base64,${res.audio_base64}`);
+      audioRef.current = audio;
+      setPlayingModelId(modelId);
+      audio.onended = () => stopAuditionAudio();
+      audio.onerror = () => {
+        setFeedback({ type: 'error', message: `Failed to play ${modelId} sample.` });
+        stopAuditionAudio();
+      };
+      await audio.play();
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || `Sarvam ${modelId} preview failed.` });
+    } finally {
+      setAuditioningModel(null);
+    }
+  };
+
+  const handleAuditionVoice = async () => {
+    if (isPlayingAudio) {
+      stopAuditionAudio();
+      return;
+    }
+    stopAuditionAudio();
+    const lang = formState.language || 'te-IN';
+    const sample = formState.greeting_message || SARVAM_SAMPLE_BY_LANG[lang] || 'Namaskaram! Welcome to Trivaana AI.';
+    const provider = formState.provider || 'sarvam';
+    const modelId = provider === 'sarvam' ? (formState as any).tts_model_id || 'bulbul:v3' : undefined;
+    try {
+      const res = await trivaanaApi.previewVoice({
+        voice_id: formState.voice_id || 'shubh',
+        provider,
+        model_id: modelId,
+        language: lang,
         text: sample,
         speed: formState.speech_rate || 1.0,
         stability: formState.stability || 0.6,
       });
       if (res.audio_base64) {
-        const audio = new Audio(`data:audio/mpeg;base64,${res.audio_base64}`);
+        const audio = new Audio(`data:${res.content_type || 'audio/mpeg'};base64,${res.audio_base64}`);
+        audioRef.current = audio;
         setIsPlayingAudio(true);
-        audio.onended = () => setIsPlayingAudio(false);
+        audio.onended = () => stopAuditionAudio();
         await audio.play();
         return;
       }
-    } catch {
-      // Fallback to browser synthesis
-    }
-    if ('speechSynthesis' in window) {
-      const u = new SpeechSynthesisUtterance(sample);
-      u.rate = formState.speech_rate || 1.0;
-      u.onend = () => setIsPlayingAudio(false);
-      setIsPlayingAudio(true);
-      window.speechSynthesis.speak(u);
+      setFeedback({ type: 'error', message: res.message || 'No audio returned by provider.' });
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err?.message || 'Voice preview failed.' });
     }
   };
 
@@ -962,20 +1098,120 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
                     />
                   </div>
-                  {formState.provider === 'sarvam' && (
+                  {(formState.provider || 'sarvam') === 'sarvam' && (
                     <div>
                       <label className="block font-bold text-slate-700 mb-1">Sarvam TTS Model</label>
                       <select
-                        value={(formState as any).tts_model || 'bulbul:v3'}
-                        onChange={(e) => setFormState({ ...formState, tts_model: e.target.value } as any)}
+                        value={(formState as any).tts_model_id || 'bulbul:v3'}
+                        onChange={(e) => {
+                          const nextModel = e.target.value as 'bulbul:v3' | 'bulbul:v4-flash';
+                          const lang = formState.language || 'te-IN';
+                          const defaultSpk =
+                            nextModel === 'bulbul:v4-flash'
+                              ? SARVAM_V4_DEFAULT_SPEAKER[lang] || 'shubh_hi_customer'
+                              : SARVAM_V3_DEFAULT_SPEAKER[lang] || 'shubh';
+                          setFormState({ ...formState, tts_model_id: nextModel, voice_id: defaultSpk } as any);
+                        }}
                         className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-mono"
                       >
-                        <option value="bulbul:v3">bulbul:v3 (Flagship 11 Indian Languages)</option>
-                        <option value="bulbul:v4-flash">bulbul:v4-flash (Low-Latency Regional)</option>
+                        <option value="bulbul:v3">bulbul:v3 (₹1.76–₹1.99/min API · 11 Languages)</option>
+                        <option value="bulbul:v4-flash">bulbul:v4-flash (₹0.84–₹0.99/min API · Low-Latency)</option>
                       </select>
                     </div>
                   )}
                 </div>
+
+                {(formState.provider || 'sarvam') === 'sarvam' && (
+                  <div className="p-4 rounded-2xl bg-gradient-to-br from-orange-50/60 to-white border border-orange-200/80 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs font-extrabold text-slate-900 flex items-center gap-1.5">
+                          <Volume2 className="w-4 h-4 text-orange-600" />
+                          <span>Compare Sarvam Models &amp; Per-Minute Budget ({formState.language || 'te-IN'})</span>
+                        </div>
+                        <p className="text-[11px] text-slate-500 mt-0.5">
+                          Audition how each Sarvam TTS model speaks in {formState.language || 'te-IN'} and compare live per-minute cost (TTS + saaras:v4 STT).
+                        </p>
+                      </div>
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-white border border-slate-200 text-slate-700">
+                        Customer Rate: ₹6.50 / min
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {SARVAM_MODEL_OPTIONS.map((m) => {
+                        const lang = formState.language || 'te-IN';
+                        const isSupported = m.supportedLangs.includes(lang);
+                        const isChosen = ((formState as any).tts_model_id || 'bulbul:v3') === m.id;
+                        const isListening = playingModelId === m.id;
+                        const isLoading = auditioningModel === m.id;
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              if (!isSupported) return;
+                              const defaultSpk =
+                                m.id === 'bulbul:v4-flash'
+                                  ? SARVAM_V4_DEFAULT_SPEAKER[lang] || 'shubh_hi_customer'
+                                  : SARVAM_V3_DEFAULT_SPEAKER[lang] || 'shubh';
+                              setFormState({ ...formState, provider: 'sarvam', tts_model_id: m.id, voice_id: defaultSpk } as any);
+                            }}
+                            className={`p-3.5 rounded-2xl border transition flex flex-col justify-between gap-2.5 ${
+                              !isSupported
+                                ? 'bg-slate-50 border-slate-200 opacity-60 cursor-not-allowed'
+                                : isChosen
+                                  ? 'bg-white border-orange-500 ring-2 ring-orange-200 cursor-pointer'
+                                  : 'bg-white border-slate-200 hover:border-orange-300 cursor-pointer'
+                            }`}
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-extrabold text-slate-900 text-xs">{m.name}</span>
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-orange-50 text-orange-700 font-bold">
+                                  {m.id}
+                                </span>
+                              </div>
+                              <div className="text-[10px] font-semibold text-slate-500">{m.badge}</div>
+                              <p className="text-[11px] text-slate-600">{m.desc}</p>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2 p-2 rounded-xl bg-slate-50 border border-slate-100 text-[10px]">
+                              <div>
+                                <div className="text-slate-500">Sarvam API / min</div>
+                                <div className="font-extrabold text-slate-900">{m.apiPerMin}</div>
+                              </div>
+                              <div>
+                                <div className="text-slate-500">TTS Rate</div>
+                                <div className="font-bold text-slate-800">{m.ttsPerMin}</div>
+                              </div>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 pt-1">
+                              <button
+                                type="button"
+                                disabled={!isSupported || isLoading}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAuditionSarvamModel(m.id, lang, formState.greeting_message);
+                                }}
+                                className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-[11px] font-bold inline-flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                              >
+                                {isLoading ? (
+                                  <Loader2 className="w-3 h-3 animate-spin" />
+                                ) : isListening ? (
+                                  <Square className="w-3 h-3" />
+                                ) : (
+                                  <Play className="w-3 h-3" />
+                                )}
+                                <span>{isLoading ? 'Loading...' : isListening ? 'Stop Sample' : `Listen ${m.id}`}</span>
+                              </button>
+                              <span className={`text-[10px] font-bold ${isChosen ? 'text-orange-600' : 'text-slate-500'}`}>
+                                {!isSupported ? `Not available for ${lang}` : isChosen ? '✓ Selected' : 'Click to select'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex items-center gap-3">
                   <button onClick={handleAuditionVoice} className="px-4 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 font-bold text-slate-800 flex items-center gap-1.5 cursor-pointer">
@@ -1193,11 +1429,11 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
 
       {/* Create AI Employee Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50">
-          <form onSubmit={handleCreateEmployee} className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <form onSubmit={handleCreateEmployee} className="bg-white rounded-3xl max-w-2xl w-full p-6 space-y-4 shadow-2xl my-8">
             <div className="flex justify-between items-center border-b pb-3">
               <h3 className="text-base font-black text-slate-900">Create New AI Employee</h3>
-              <button type="button" onClick={() => setShowCreateModal(false)} className="text-xs text-slate-500 cursor-pointer">Cancel</button>
+              <button type="button" onClick={() => { stopAuditionAudio(); setShowCreateModal(false); }} className="text-xs text-slate-500 cursor-pointer">Cancel</button>
             </div>
             <div className="space-y-3 text-xs">
               <div>
@@ -1211,13 +1447,89 @@ export const AgentStudioPanel: React.FC<AgentStudioPanelProps> = ({ initialPrese
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 mb-1">Language</label>
-                  <select value={newAgentLang} onChange={(e) => setNewAgentLang(e.target.value)} className="w-full px-3 py-2 rounded-xl border border-slate-200">
+                  <select
+                    value={newAgentLang}
+                    onChange={(e) => {
+                      const nextLang = e.target.value;
+                      setNewAgentLang(nextLang);
+                      if (newAgentModel === 'bulbul:v4-flash' && !SARVAM_V4_DEFAULT_SPEAKER[nextLang]) {
+                        setNewAgentModel('bulbul:v3');
+                      }
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                  >
                     {BRAND.languages.map((l) => (
                       <option key={l.code} value={l.code}>{l.name}</option>
                     ))}
                   </select>
                 </div>
               </div>
+
+              <div className="p-3.5 rounded-2xl bg-slate-50 border border-slate-200 space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-extrabold text-slate-900 flex items-center gap-1.5">
+                    <Volume2 className="w-3.5 h-3.5 text-orange-600" />
+                    <span>Select Sarvam AI Voice Model &amp; Per-Minute Budget</span>
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-600">Billing: ₹6.50 / min</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {SARVAM_MODEL_OPTIONS.map((m) => {
+                    const isSupported = m.supportedLangs.includes(newAgentLang);
+                    const isSelected = newAgentModel === m.id;
+                    const isListening = playingModelId === m.id;
+                    const isLoading = auditioningModel === m.id;
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => isSupported && setNewAgentModel(m.id)}
+                        className={`p-3 rounded-xl border transition flex flex-col justify-between gap-2 ${
+                          !isSupported
+                            ? 'bg-white/60 border-slate-200 opacity-55 cursor-not-allowed'
+                            : isSelected
+                              ? 'bg-white border-orange-500 ring-2 ring-orange-200 cursor-pointer'
+                              : 'bg-white border-slate-200 hover:border-orange-300 cursor-pointer'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-bold text-slate-900">{m.name}</span>
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-orange-50 text-orange-700 font-bold">{m.id}</span>
+                          </div>
+                          <div className="text-[10px] text-slate-500 mt-0.5">{m.badge}</div>
+                          <div className="mt-1.5 text-[10px] text-slate-700 font-semibold">
+                            API Stack: <span className="text-slate-900 font-extrabold">{m.apiPerMin}</span> <span className="text-slate-400">({m.ttsPerMin} TTS + STT)</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                          <button
+                            type="button"
+                            disabled={!isSupported || isLoading}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleAuditionSarvamModel(m.id, newAgentLang);
+                            }}
+                            className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-bold inline-flex items-center gap-1 cursor-pointer disabled:opacity-40"
+                          >
+                            {isLoading ? (
+                              <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : isListening ? (
+                              <Square className="w-3 h-3" />
+                            ) : (
+                              <Play className="w-3 h-3" />
+                            )}
+                            <span>{isLoading ? 'Loading...' : isListening ? 'Stop' : 'Listen Sample'}</span>
+                          </button>
+                          <span className={`text-[10px] font-bold ${isSelected ? 'text-orange-600' : 'text-slate-400'}`}>
+                            {!isSupported ? `Use bulbul:v3 for ${newAgentLang}` : isSelected ? '✓ Selected' : 'Select'}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div>
                 <label className="block font-bold text-slate-700 mb-1">Describe the Job in Ordinary Language</label>
                 <textarea
